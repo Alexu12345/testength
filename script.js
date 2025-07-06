@@ -39,12 +39,12 @@ if (typeof __firebase_config !== 'undefined' && __firebase_config) {
             // Fallback for local development if __firebase_config is not defined or invalid
             // IMPORTANT: Replace these placeholder values with your actual Firebase project credentials
             // if you are running this application outside of the Canvas environment.
-            apiKey: "YOUR_API_KEY_HERE", // <--- THIS MUST BE A VALID API KEY FOR YOUR PROJECT
-            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-            projectId: "YOUR_PROJECT_ID",
-            storageBucket: "YOUR_PROJECT_ID.appspot.com",
-            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-            appId: "YOUR_APP_ID"
+            apiKey: "AIzaSyBu_MfB_JXvzBFaKY-Yxze1JotejU--4as",
+            authDomain: "worktrackerapp-a32af.firebaseapp.com",
+            projectId: "worktrackerapp-a32af",
+            storageBucket: "worktrackerapp-a32af.firebasestorage.app",
+            messagingSenderId: "246595598451",
+            appId: "1:246595598451:web:c6842f1618dffe765a5206"
         };
     }
 } else {
