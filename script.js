@@ -1,27 +1,56 @@
 // استيراد وظائف Firebase SDK الضرورية
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit, Timestamp, serverTimestamp, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, Timestamp, serverTimestamp, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
 // تهيئة Firebase App و Firestore Database
 // يتم توفير firebaseConfig و __app_id و __initial_auth_token من بيئة Canvas
 // يجب استخدام هذه المتغيرات العامة لضمان عمل التطبيق في بيئة Canvas
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
 
-// تحقق من أن firebaseConfig يحتوي على projectId
-if (!firebaseConfig || !firebaseConfig.projectId) {
-    console.error("خطأ في تهيئة Firebase: 'projectId' غير متوفر في التكوين.");
+// تحقق من وجود __app_id و __firebase_config قبل الاستخدام
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+let firebaseConfig = {};
+try {
+    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+        firebaseConfig = JSON.parse(__firebase_config);
+    } else {
+        console.warn("تحذير: متغير __firebase_config غير معرف أو فارغ.");
+    }
+} catch (e) {
+    console.error("خطأ في تحليل __firebase_config:", e);
     // يمكنك عرض رسالة خطأ للمستخدم هنا إذا أردت
     // showToastMessage("خطأ في تهيئة التطبيق. يرجى الاتصال بالدعم.", "error");
 }
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
 
+// تحقق من أن firebaseConfig يحتوي على projectId
+if (!firebaseConfig || !firebaseConfig.projectId) {
+    console.error("خطأ في تهيئة Firebase: 'projectId' غير متوفر في التكوين.");
+    // لا تحاول تهيئة Firebase إذا كان التكوين غير صالح
+    // showToastMessage("خطأ في تهيئة التطبيق. يرجى الاتصال بالدعم.", "error");
+    // يمكن هنا إيقاف تنفيذ السكريبت أو عرض رسالة خطأ كبيرة للمستخدم
+}
+
+let app;
+let db;
+let auth;
 let userId = null; // سيتم تعيينه بعد المصادقة
 let isAuthReady = false; // لتتبع ما إذا كانت المصادقة جاهزة
+
+// حاول تهيئة Firebase فقط إذا كان التكوين صالحًا
+if (firebaseConfig && firebaseConfig.projectId) {
+    try {
+        app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        auth = getAuth(app);
+    } catch (e) {
+        console.error("خطأ أثناء تهيئة Firebase SDK:", e);
+        // showToastMessage("خطأ فادح في تهيئة Firebase. يرجى التحقق من وحدة التحكم.", "error");
+    }
+} else {
+    console.error("لا يمكن تهيئة Firebase بسبب تكوين غير صالح.");
+}
+
 
 // الحالة العامة للتطبيق
 let loggedInUser = null; // يخزن بيانات المستخدم الحالي { id, name, role }
@@ -331,7 +360,7 @@ const employeeRatesTableBody = document.getElementById('employeeRatesTableBody')
 
 // عناصر نافذة تعديل السجل المنبثقة
 const editRecordModal = document.getElementById('editRecordModal');
-const closeEditRecordModalBtn = editRecordModal.querySelector('.close-button');
+const closeEditRecordModalBtn = editRecordModal ? editRecordModal.querySelector('.close-button') : null;
 const editAccountSelect = document.getElementById('editAccountSelect');
 const editTaskTypeSelect = document.getElementById('editTaskTypeSelect');
 const editTotalTasksCount = document.getElementById('editTotalTasksCount');
@@ -597,14 +626,21 @@ const loadSession = async () => {
         loggedInUser = JSON.parse(storedUser);
         // إعادة المصادقة باستخدام الرمز المخصص إذا كان متاحًا
         try {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
+            if (auth) { // تأكد من تهيئة auth قبل الاستخدام
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                showPage(mainDashboard);
+                await fetchAllStaticData(); // جلب البيانات الثابتة بعد استئناف الجلسة
+                renderMainDashboard();
             } else {
-                await signInAnonymously(auth);
+                console.error("Firebase Auth لم يتم تهيئته بشكل صحيح.");
+                showToastMessage(getTranslatedText('error'), 'error');
+                clearSession();
+                showPage(loginPage);
             }
-            showPage(mainDashboard);
-            await fetchAllStaticData(); // جلب البيانات الثابتة بعد استئناف الجلسة
-            renderMainDashboard();
         } catch (error) {
             console.error("Error re-authenticating:", error);
             showToastMessage(getTranslatedText('error'), 'error');
@@ -623,13 +659,18 @@ const loadSession = async () => {
  * ويقوم بإعداد مستمعي onSnapshot للتحديثات في الوقت الفعلي.
  */
 const fetchAllStaticData = async () => {
+    if (!db) {
+        console.error("Firestore لم يتم تهيئته بشكل صحيح. لا يمكن جلب البيانات.");
+        showToastMessage(getTranslatedText('error'), 'error');
+        return;
+    }
     showLoadingIndicator(true);
     try {
         // مستمع المستخدمين
         onSnapshot(collection(db, `artifacts/${appId}/public/data/users`), (snapshot) => {
             allUsers = snapshot.docs.map(getDocData);
             console.log("Users updated:", allUsers);
-            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage.style.display === 'flex') {
+            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage && adminPanelPage.style.display === 'flex') {
                 loadAndDisplayUsers();
                 populateUserFilter();
                 renderEmployeeRatesAndTotals(); // تحديث إجماليات الموظفين
@@ -643,7 +684,7 @@ const fetchAllStaticData = async () => {
         onSnapshot(collection(db, `artifacts/${appId}/public/data/accounts`), (snapshot) => {
             allAccounts = snapshot.docs.map(getDocData);
             console.log("Accounts updated:", allAccounts);
-            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage.style.display === 'flex') {
+            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage && adminPanelPage.style.display === 'flex') {
                 loadAndDisplayAccounts();
                 renderEmployeeRatesAndTotals(); // تحديث إجماليات الموظفين
             }
@@ -656,7 +697,7 @@ const fetchAllStaticData = async () => {
         onSnapshot(collection(db, `artifacts/${appId}/public/data/taskDefinitions`), (snapshot) => {
             allTaskDefinitions = snapshot.docs.map(getDocData);
             console.log("Task definitions updated:", allTaskDefinitions);
-            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage.style.display === 'flex') {
+            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage && adminPanelPage.style.display === 'flex') {
                 loadAndDisplayTaskDefinitions();
             }
         }, (error) => {
@@ -668,7 +709,7 @@ const fetchAllStaticData = async () => {
         onSnapshot(collection(db, `artifacts/${appId}/public/data/employeeCustomRates`), (snapshot) => {
             allEmployeeRates = snapshot.docs.map(getDocData);
             console.log("Employee custom rates updated:", allEmployeeRates);
-            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage.style.display === 'flex') {
+            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage && adminPanelPage.style.display === 'flex') {
                 renderEmployeeRatesAndTotals(); // تحديث إجماليات الموظفين
             }
         }, (error) => {
@@ -681,7 +722,7 @@ const fetchAllStaticData = async () => {
             onSnapshot(collection(db, `artifacts/${appId}/public/data/workRecords`), (snapshot) => {
                 allWorkRecords = snapshot.docs.map(getDocData);
                 console.log("Work records updated:", allWorkRecords);
-                if (adminPanelPage.style.display === 'flex') {
+                if (adminPanelPage && adminPanelPage.style.display === 'flex') {
                     loadAndDisplayWorkRecords(recordFilterUser.value === "" ? null : recordFilterUser.value, recordFilterDate.value === "" ? null : recordFilterDate.value);
                 }
                 renderMainDashboard(); // لتحديث إجماليات المستخدمين العاديين أيضًا
@@ -719,6 +760,12 @@ const showLoginErrorModal = (titleKey, messageKey) => {
  * يتعامل مع محاولة تسجيل الدخول.
  */
 const handleLogin = async () => {
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot handle login.");
+        return;
+    }
+
     showLoadingIndicator(true);
     try {
         const pin = Array.from(pinInputFields).map(input => input.value).join('');
@@ -773,7 +820,9 @@ const logout = () => {
     showPage(loginPage);
     // مسح حقول الـ PIN
     pinInputFields.forEach(input => input.value = '');
-    pinInputFields[0].focus(); // التركيز على أول حقل
+    if (pinInputFields.length > 0) {
+        pinInputFields[0].focus(); // التركيز على أول حقل
+    }
     // تدمير الرسم البياني عند تسجيل الخروج
     if (taskChart) {
         taskChart.destroy();
@@ -1064,6 +1113,11 @@ const saveWorkRecord = async () => {
         showToastMessage(getTranslatedText('noTasksToSave'), 'error');
         return;
     }
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot save work record.");
+        return;
+    }
 
     showLoadingIndicator(true);
     isSavingWork = true; // تعيين العلامة لمنع تحذير beforeunload
@@ -1110,11 +1164,13 @@ const saveWorkRecord = async () => {
 };
 
 const updateSaveButtonState = () => {
-    saveWorkBtn.disabled = currentSessionTasks.length === 0;
-    if (currentSessionTasks.length === 0) {
-        saveWorkBtn.classList.add('disabled');
-    } else {
-        saveWorkBtn.classList.remove('disabled');
+    if (saveWorkBtn) {
+        saveWorkBtn.disabled = currentSessionTasks.length === 0;
+        if (currentSessionTasks.length === 0) {
+            saveWorkBtn.classList.add('disabled');
+        } else {
+            saveWorkBtn.classList.remove('disabled');
+        }
     }
 };
 
@@ -1126,6 +1182,11 @@ const updateSaveButtonState = () => {
 const renderTrackWorkPage = async (user) => {
     if (!user) {
         showPage(loginPage);
+        return;
+    }
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot render track work page.");
         return;
     }
 
@@ -1141,8 +1202,8 @@ const renderTrackWorkPage = async (user) => {
 
 
         if (records.length === 0) {
-            trackTasksTableBody.innerHTML = `<tr><td colspan="10">${getTranslatedText('noDataAvailable')}</td></tr>`;
-            trackTasksTableFoot.innerHTML = '';
+            if (trackTasksTableBody) trackTasksTableBody.innerHTML = `<tr><td colspan="10">${getTranslatedText('noDataAvailable')}</td></tr>`;
+            if (trackTasksTableFoot) trackTasksTableFoot.innerHTML = '';
             if (taskChart) {
                 taskChart.destroy();
                 taskChart = null;
@@ -1173,6 +1234,10 @@ const renderTrackWorkPage = async (user) => {
  * @param {Object} data - كائن يحتوي على أسماء المهام وإجمالي الدقائق.
  */
 const generateChart = (data) => {
+    if (!taskChartCanvas) {
+        console.warn("Canvas element for chart not found.");
+        return;
+    }
     if (taskChart) {
         taskChart.destroy(); // تدمير الرسم البياني القديم قبل إنشاء الجديد
     }
@@ -1210,7 +1275,7 @@ const generateChart = (data) => {
                 legend: {
                     position: 'top',
                     labels: {
-                        color: document.body.classList.contains('dark-mode') ? 'var(--text-color-dark)' : 'var(--text-color-light)',
+                        color: document.body.classList.contains('dark-mode') ? '#ecf0f1' : '#34495e', // استخدم ألوان ثابتة لضمان التوافق
                         font: {
                             size: 14,
                             family: 'Segoe UI'
@@ -1260,6 +1325,10 @@ const generateChart = (data) => {
  * @param {Array<Object>} records - مصفوفة من سجلات العمل.
  */
 const renderTrackTasksTable = (records) => {
+    if (!trackTasksTableBody || !trackTasksTableFoot) {
+        console.warn("Table elements for track tasks not found.");
+        return;
+    }
     trackTasksTableBody.innerHTML = '';
     trackTasksTableFoot.innerHTML = '';
 
@@ -1287,8 +1356,8 @@ const renderTrackTasksTable = (records) => {
     records.sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
 
     let currentDate = '';
-    let currentAccount = '';
-    let currentTask = '';
+    // let currentAccount = ''; // غير مستخدم
+    // let currentTask = ''; // غير مستخدم
 
     records.forEach(record => {
         const recordDate = record.timestamp.toDate();
@@ -1323,9 +1392,9 @@ const renderTrackTasksTable = (records) => {
             <td>${formatNumberToEnglish(record.timingMinutes.toFixed(2))}</td>
             <td>${formatNumberToEnglish(record.totalTasksCount)}</td>
             <td>${formatNumberToEnglish(record.totalTimeMinutes.toFixed(2))}</td>
-            <td>${formatNumberToEnglish(taskTotals[record.taskDefinitionId].toFixed(2))}</td>
-            <td>${formatNumberToEnglish(accountTotals[record.accountId].toFixed(2))}</td>
-            <td>${formatNumberToEnglish(dailyTotals[formattedDate].toFixed(2))}</td>
+            <td>${formatNumberToEnglish(taskTotals[record.taskDefinitionId] ? taskTotals[record.taskDefinitionId].toFixed(2) : '0.00')}</td>
+            <td>${formatNumberToEnglish(accountTotals[record.accountId] ? accountTotals[record.accountId].toFixed(2) : '0.00')}</td>
+            <td>${formatNumberToEnglish(dailyTotals[formattedDate] ? dailyTotals[formattedDate].toFixed(2) : '0.00')}</td>
         `;
         grandTotalMinutes += record.totalTimeMinutes;
     });
@@ -1344,23 +1413,29 @@ const renderTrackTasksTable = (records) => {
  * يعرض لوحة تحكم المدير ويقوم بتحميل البيانات.
  */
 const renderAdminPanel = async () => {
-    if (loggedInUser && loggedInUser.role === 'admin') {
-        showLoadingIndicator(true);
-        try {
-            await loadAndDisplayUsers();
-            await loadAndDisplayAccounts();
-            await loadAndDisplayTaskDefinitions();
-            populateUserFilter(); // ملء قائمة المستخدمين في فلتر السجلات
-            await loadAndDisplayWorkRecords(null, null); // تحميل جميع السجلات افتراضياً
-            await renderEmployeeRatesAndTotals(); // تحميل وعرض أسعار الموظفين والإجماليات
-        } catch (error) {
-            console.error("Error rendering admin panel:", error);
-            showToastMessage(getTranslatedText('error'), 'error');
-        } finally {
-            showLoadingIndicator(false);
-        }
-    } else {
+    if (!loggedInUser || loggedInUser.role !== 'admin') {
         showPage(loginPage); // إعادة التوجيه إلى صفحة تسجيل الدخول إذا لم يكن مسؤولاً
+        return;
+    }
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot render admin panel.");
+        return;
+    }
+
+    showLoadingIndicator(true);
+    try {
+        await loadAndDisplayUsers();
+        await loadAndDisplayAccounts();
+        await loadAndDisplayTaskDefinitions();
+        populateUserFilter(); // ملء قائمة المستخدمين في فلتر السجلات
+        await loadAndDisplayWorkRecords(null, null); // تحميل جميع السجلات افتراضياً
+        await renderEmployeeRatesAndTotals(); // تحميل وعرض أسعار الموظفين والإجماليات
+    } catch (error) {
+        console.error("Error rendering admin panel:", error);
+        showToastMessage(getTranslatedText('error'), 'error');
+    } finally {
+        showLoadingIndicator(false);
     }
 };
 
@@ -1368,6 +1443,7 @@ const renderAdminPanel = async () => {
  * يحمل ويعرض المستخدمين في جدول إدارة المستخدمين.
  */
 const loadAndDisplayUsers = () => {
+    if (!usersTableBody) return;
     usersTableBody.innerHTML = '';
     allUsers.forEach(user => {
         const row = usersTableBody.insertRow();
@@ -1387,6 +1463,11 @@ const loadAndDisplayUsers = () => {
  * يضيف مستخدمًا جديدًا إلى Firestore.
  */
 const addUser = async () => {
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot add user.");
+        return;
+    }
     const userName = newUserNameInput.value.trim();
     const userPIN = newUserPINInput.value.trim();
 
@@ -1419,6 +1500,11 @@ const addUser = async () => {
  * @param {string} userIdToDelete - معرف المستخدم المراد حذفه.
  */
 const deleteUser = async (userIdToDelete) => {
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot delete user.");
+        return;
+    }
     // استخدام نافذة منبثقة مخصصة بدلاً من confirm
     const confirmDelete = await new Promise(resolve => {
         const modal = document.createElement('div');
@@ -1473,6 +1559,7 @@ const deleteUser = async (userIdToDelete) => {
  * يحمل ويعرض الحسابات في جدول إدارة الحسابات.
  */
 const loadAndDisplayAccounts = () => {
+    if (!accountsTableBody) return;
     accountsTableBody.innerHTML = '';
     allAccounts.forEach(account => {
         const row = accountsTableBody.insertRow();
@@ -1492,6 +1579,11 @@ const loadAndDisplayAccounts = () => {
  * يضيف حسابًا جديدًا إلى Firestore.
  */
 const addAccount = async () => {
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot add account.");
+        return;
+    }
     const accountName = newAccountNameInput.value.trim();
     const defaultPrice = parseFloat(newAccountPriceInput.value);
 
@@ -1523,6 +1615,11 @@ const addAccount = async () => {
  * @param {string} accountIdToDelete - معرف الحساب المراد حذفه.
  */
 const deleteAccount = async (accountIdToDelete) => {
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot delete account.");
+        return;
+    }
     // استخدام نافذة منبثقة مخصصة بدلاً من confirm
     const confirmDelete = await new Promise(resolve => {
         const modal = document.createElement('div');
@@ -1564,6 +1661,7 @@ const deleteAccount = async (accountIdToDelete) => {
  * يحمل ويعرض تعريفات المهام في جدول إدارة المهام.
  */
 const loadAndDisplayTaskDefinitions = () => {
+    if (!tasksDefinitionTableBody) return;
     tasksDefinitionTableBody.innerHTML = '';
     allTaskDefinitions.forEach(task => {
         const timingsDisplay = task.timings.map(t => formatMinutesToMMSS(t.minutes)).join(', ');
@@ -1584,6 +1682,7 @@ const loadAndDisplayTaskDefinitions = () => {
  * يضيف حقل إدخال جديد للتوقيتات في قسم إضافة مهمة جديدة.
  */
 const addTimingField = () => {
+    if (!newTimingsContainer) return;
     const div = document.createElement('div');
     div.className = 'timing-input-group';
     div.innerHTML = `
@@ -1605,6 +1704,11 @@ const addTimingField = () => {
  * يضيف تعريف مهمة جديد إلى Firestore.
  */
 const addTaskDefinition = async () => {
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot add task definition.");
+        return;
+    }
     const taskName = newTaskNameInput.value.trim();
     const timingInputs = newTimingsContainer.querySelectorAll('.timing-input-group');
     const timings = [];
@@ -1633,12 +1737,18 @@ const addTaskDefinition = async () => {
             createdAt: serverTimestamp()
         });
         newTaskNameInput.value = '';
-        newTimingsContainer.innerHTML = `
-            <div class="timing-input-group">
-                <input type="number" class="new-task-timing-minutes" placeholder="${getTranslatedText('minutesPlaceholder')}" min="0">
-                <input type="number" class="new-task-timing-seconds" placeholder="${getTranslatedText('secondsPlaceholder')}" min="0" max="59">
-            </div>
-        `; // إعادة تعيين حقول التوقيت
+        if (newTimingsContainer) {
+            newTimingsContainer.innerHTML = `
+                <div class="timing-input-group">
+                    <input type="number" class="new-task-timing-minutes" placeholder="${getTranslatedText('minutesPlaceholder')}" min="0">
+                    <input type="number" class="new-task-timing-seconds" placeholder="${getTranslatedText('secondsPlaceholder')}" min="0" max="59">
+                </div>
+            `; // إعادة تعيين حقول التوقيت
+            // إعادة إضافة مستمع الحدث لزر الإزالة الافتراضي
+            newTimingsContainer.querySelector('.remove-timing-field')?.addEventListener('click', (e) => {
+                e.target.closest('.timing-input-group').remove();
+            });
+        }
         showToastMessage(getTranslatedText('taskAdded'), 'success');
     } catch (error) {
         console.error("Error adding task definition:", error);
@@ -1653,6 +1763,11 @@ const addTaskDefinition = async () => {
  * @param {string} taskDefinitionIdToDelete - معرف تعريف المهمة المراد حذفه.
  */
 const deleteTaskDefinition = async (taskDefinitionIdToDelete) => {
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot delete task definition.");
+        return;
+    }
     // استخدام نافذة منبثقة مخصصة بدلاً من confirm
     const confirmDelete = await new Promise(resolve => {
         const modal = document.createElement('div');
@@ -1693,6 +1808,7 @@ const deleteTaskDefinition = async (taskDefinitionIdToDelete) => {
  * يملأ قائمة المستخدمين المنسدلة في فلتر سجلات العمل.
  */
 const populateUserFilter = () => {
+    if (!recordFilterUser) return;
     recordFilterUser.innerHTML = `<option value="">${getTranslatedText('allUsers')}</option>`;
     allUsers.forEach(user => {
         const option = document.createElement('option');
@@ -1708,6 +1824,7 @@ const populateUserFilter = () => {
  * @param {string|null} dateFilter - تاريخ للتصفية (YYYY-MM-DD)، أو null للجميع.
  */
 const loadAndDisplayWorkRecords = async (userIdFilter, dateFilter) => {
+    if (!workRecordsTableBody) return;
     workRecordsTableBody.innerHTML = '';
     let filteredRecords = [...allWorkRecords]; // ابدأ بجميع السجلات
 
@@ -1756,6 +1873,10 @@ const loadAndDisplayWorkRecords = async (userIdFilter, dateFilter) => {
  * @param {Object} record - كائن سجل العمل المراد تعديله.
  */
 const openEditRecordModal = (record) => {
+    if (!editRecordModal || !editAccountSelect || !editTaskTypeSelect || !editTotalTasksCount || !editTotalTime || !editRecordDate || !editRecordTime) {
+        console.warn("Edit record modal elements not found.");
+        return;
+    }
     currentEditingRecordId = record.id;
 
     // ملء قوائم الحسابات والمهام المنسدلة
@@ -1793,6 +1914,11 @@ const openEditRecordModal = (record) => {
  */
 const saveEditedRecord = async () => {
     if (!currentEditingRecordId) return;
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot save edited record.");
+        return;
+    }
 
     const accountId = editAccountSelect.value;
     const taskDefinitionId = editTaskTypeSelect.value;
@@ -1847,6 +1973,11 @@ const saveEditedRecord = async () => {
  * @param {string} recordIdToDelete - معرف السجل المراد حذفه.
  */
 const deleteWorkRecord = async (recordIdToDelete) => {
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot delete work record.");
+        return;
+    }
     // استخدام نافذة منبثقة مخصصة بدلاً من confirm
     const confirmDelete = await new Promise(resolve => {
         const modal = document.createElement('div');
@@ -1887,14 +2018,15 @@ const deleteWorkRecord = async (recordIdToDelete) => {
  * يحسب ويعرض إجماليات ساعات العمل والرصيد لكل موظف ولكل حساب.
  */
 const renderEmployeeRatesAndTotals = () => {
+    if (!employeeRatesTableBody) return;
     employeeRatesTableBody.innerHTML = '';
 
     const employeeAccountTotals = {}; // { employeeId: { accountId: { totalTime: 0, totalBalance: 0 } } }
-    const employeeOverallTotals = {}; // { employeeId: { totalHours: 0, totalBalance: 0 } }
+    // const employeeOverallTotals = {}; // { employeeId: { totalHours: 0, totalBalance: 0 } } // تم حسابها مباشرة
 
     allUsers.forEach(user => {
         employeeAccountTotals[user.id] = {};
-        employeeOverallTotals[user.id] = { totalHours: 0, totalBalance: 0 };
+        // employeeOverallTotals[user.id] = { totalHours: 0, totalBalance: 0 };
     });
 
     allWorkRecords.forEach(record => {
@@ -1935,8 +2067,8 @@ const renderEmployeeRatesAndTotals = () => {
             userTotalHours += accountData.totalTime / 60;
             userTotalBalance += accountData.totalBalance;
         });
-        employeeOverallTotals[user.id].totalHours = userTotalHours;
-        employeeOverallTotals[user.id].totalBalance = userTotalBalance;
+        // employeeOverallTotals[user.id].totalHours = userTotalHours;
+        // employeeOverallTotals[user.id].totalBalance = userTotalBalance;
 
 
         if (accountsWorkedOn.length === 0) {
@@ -1976,8 +2108,8 @@ const renderEmployeeRatesAndTotals = () => {
                 <td>${customRate ? formatNumberToEnglish(parseFloat(customRate.customPrice).toFixed(2)) : getTranslatedText('defaultPriceLabel')}</td>
                 <td>${formatTotalMinutesToHHMMSS(accountData.totalTime)}</td>
                 <td>${formatNumberToEnglish(accountData.totalBalance.toFixed(2))}</td>
-                <td>${firstRowForUser ? formatNumberToEnglish(employeeOverallTotals[user.id].totalHours.toFixed(2)) + ' ' + getTranslatedText('hoursUnit') : ''}</td>
-                <td>${firstRowForUser ? formatNumberToEnglish(employeeOverallTotals[user.id].totalBalance.toFixed(2)) + ' ' + getTranslatedText('currencyUnit') : ''}</td>
+                <td>${firstRowForUser ? formatNumberToEnglish(userTotalHours.toFixed(2)) + ' ' + getTranslatedText('hoursUnit') : ''}</td>
+                <td>${firstRowForUser ? formatNumberToEnglish(userTotalBalance.toFixed(2)) + ' ' + getTranslatedText('currencyUnit') : ''}</td>
             `;
             firstRowForUser = false;
         });
@@ -1999,6 +2131,10 @@ const renderEmployeeRatesAndTotals = () => {
  * @param {string} accountId - معرف الحساب.
  */
 const openEditEmployeeRateModal = (employeeId, accountId) => {
+    if (!editEmployeeRateModal || !modalEmployeeName || !modalAccountName || !modalDefaultPrice || !modalCustomPriceInput) {
+        console.warn("Edit employee rate modal elements not found.");
+        return;
+    }
     const employee = allUsers.find(u => u.id === employeeId);
     const account = allAccounts.find(acc => acc.id === accountId);
     const customRate = allEmployeeRates.find(rate =>
@@ -2024,6 +2160,11 @@ const openEditEmployeeRateModal = (employeeId, accountId) => {
  */
 const saveCustomRate = async () => {
     if (!currentEditingRate) return;
+    if (!db) {
+        showToastMessage(getTranslatedText('error'), 'error');
+        console.error("Firestore is not initialized. Cannot save custom rate.");
+        return;
+    }
 
     const customPrice = parseFloat(modalCustomPriceInput.value);
 
@@ -2063,30 +2204,38 @@ const saveCustomRate = async () => {
 // 12. مستمعي الأحداث الأولية
 document.addEventListener('DOMContentLoaded', async () => {
     // المصادقة الأولية
-    onAuthStateChanged(auth, async (user) => {
-        if (!isAuthReady) { // تأكد من التشغيل مرة واحدة فقط عند التهيئة الأولية
-            if (user) {
-                userId = user.uid;
-                console.log("Firebase Auth Ready. User ID:", userId);
-            } else {
-                // إذا لم يكن هناك مستخدم مصادق عليه، قم بتسجيل الدخول بشكل مجهول
-                try {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
+    // تأكد من تهيئة Firebase SDK قبل محاولة المصادقة
+    if (auth) {
+        onAuthStateChanged(auth, async (user) => {
+            if (!isAuthReady) { // تأكد من التشغيل مرة واحدة فقط عند التهيئة الأولية
+                if (user) {
+                    userId = user.uid;
+                    console.log("Firebase Auth Ready. User ID:", userId);
+                } else {
+                    // إذا لم يكن هناك مستخدم مصادق عليه، قم بتسجيل الدخول بشكل مجهول
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                        userId = auth.currentUser?.uid || crypto.randomUUID(); // استخدم uid إذا تم تسجيل الدخول، وإلا فمعرف عشوائي
+                        console.log("Signed in anonymously or with custom token. User ID:", userId);
+                    } catch (error) {
+                        console.error("Error during anonymous sign-in:", error);
+                        showToastMessage(getTranslatedText('error'), 'error');
                     }
-                    userId = auth.currentUser?.uid || crypto.randomUUID(); // استخدم uid إذا تم تسجيل الدخول، وإلا فمعرف عشوائي
-                    console.log("Signed in anonymously or with custom token. User ID:", userId);
-                } catch (error) {
-                    console.error("Error during anonymous sign-in:", error);
-                    showToastMessage(getTranslatedText('error'), 'error');
                 }
+                isAuthReady = true; // تعيين العلامة بعد اكتمال المصادقة الأولية
+                await loadSession(); // حمل الجلسة بعد أن تصبح المصادقة جاهزة
             }
-            isAuthReady = true; // تعيين العلامة بعد اكتمال المصادقة الأولية
-            await loadSession(); // حمل الجلسة بعد أن تصبح المصادقة جاهزة
-        }
-    });
+        });
+    } else {
+        console.error("Firebase Auth SDK لم يتم تهيئته. لن تعمل المصادقة.");
+        showToastMessage("خطأ في تهيئة المصادقة. يرجى التحقق من وحدة التحكم.", "error");
+        showPage(loginPage); // عرض صفحة تسجيل الدخول حتى لو لم تتم المصادقة
+    }
+
 
     // 10. الإعداد الأولي عند تحميل DOM
     checkConnectionStatus(); // التحقق من حالة الاتصال عند التحميل
@@ -2153,8 +2302,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (startWorkOptionBtn) startWorkOptionBtn.addEventListener('click', () => {
         showPage(startWorkPage);
         fetchAccountsAndTasks();
-        taskSelectionPopup.style.display = 'flex'; // التأكد من إظهار نافذة الاختيار
-        taskDetailsContainer.style.display = 'none'; // إخفاء تفاصيل المهمة
+        if (taskSelectionPopup) taskSelectionPopup.style.display = 'flex'; // التأكد من إظهار نافذة الاختيار
+        if (taskDetailsContainer) taskDetailsContainer.style.display = 'none'; // إخفاء تفاصيل المهمة
     });
     if (trackWorkOptionBtn) trackWorkOptionBtn.addEventListener('click', () => {
         showPage(trackWorkPage);
