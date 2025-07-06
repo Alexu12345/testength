@@ -5,8 +5,16 @@ import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, q
 
 // تهيئة Firebase App و Firestore Database
 // يتم توفير firebaseConfig و __app_id و __initial_auth_token من بيئة Canvas
+// يجب استخدام هذه المتغيرات العامة لضمان عمل التطبيق في بيئة Canvas
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+// تحقق من أن firebaseConfig يحتوي على projectId
+if (!firebaseConfig || !firebaseConfig.projectId) {
+    console.error("خطأ في تهيئة Firebase: 'projectId' غير متوفر في التكوين.");
+    // يمكنك عرض رسالة خطأ للمستخدم هنا إذا أردت
+    // showToastMessage("خطأ في تهيئة التطبيق. يرجى الاتصال بالدعم.", "error");
+}
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -138,7 +146,8 @@ const translations = {
         tasks: "مهام",
         noTasksToSave: "لا توجد مهام لحفظها.",
         dateAndTimeColumn: "التاريخ والوقت",
-        allUsers: "جميع المستخدمين"
+        allUsers: "جميع المستخدمين",
+        unsavedTasksWarning: "لديك مهام غير محفوظة. هل أنت متأكد أنك تريد العودة إلى لوحة التحكم الرئيسية؟ سيتم فقدان المهام غير المحفوظة."
     },
     en: {
         loginTitle: "Login",
@@ -246,7 +255,8 @@ const translations = {
         tasks: "tasks",
         noTasksToSave: "No tasks to save.",
         dateAndTimeColumn: "Date and Time",
-        allUsers: "All Users"
+        allUsers: "All Users",
+        unsavedTasksWarning: "You have unsaved tasks. Are you sure you want to go back to the dashboard? Unsaved tasks will be lost."
     }
 };
 
@@ -587,7 +597,7 @@ const loadSession = async () => {
         loggedInUser = JSON.parse(storedUser);
         // إعادة المصادقة باستخدام الرمز المخصص إذا كان متاحًا
         try {
-            if (typeof __initial_auth_token !== 'undefined') {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                 await signInWithCustomToken(auth, __initial_auth_token);
             } else {
                 await signInAnonymously(auth);
@@ -1066,9 +1076,9 @@ const saveWorkRecord = async () => {
                     userId: loggedInUser.id,
                     userName: loggedInUser.name,
                     accountId: task.accountId,
-                    accountName: task.accountName,
+                    accountName: selectedAccount.name, // استخدم selectedAccount.name
                     taskDefinitionId: task.taskDefinitionId,
-                    taskName: task.taskName,
+                    taskName: selectedTaskDefinition.name, // استخدم selectedTaskDefinition.name
                     timingMinutes: task.timingMinutes,
                     totalTasksCount: 0,
                     totalTimeMinutes: 0,
@@ -1122,9 +1132,13 @@ const renderTrackWorkPage = async (user) => {
     showLoadingIndicator(true);
     try {
         const userRecordsCollectionRef = collection(db, `artifacts/${appId}/public/data/workRecords`);
-        const q = query(userRecordsCollectionRef, where("userId", "==", user.id), orderBy("timestamp", "desc"));
+        const q = query(userRecordsCollectionRef, where("userId", "==", user.id)); // إزالة orderBy لتجنب الأخطاء المحتملة
         const querySnapshot = await getDocs(q);
         const records = querySnapshot.docs.map(getDocData);
+
+        // فرز السجلات في الذاكرة بعد جلبها
+        records.sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
+
 
         if (records.length === 0) {
             trackTasksTableBody.innerHTML = `<tr><td colspan="10">${getTranslatedText('noDataAvailable')}</td></tr>`;
@@ -2057,7 +2071,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
                 // إذا لم يكن هناك مستخدم مصادق عليه، قم بتسجيل الدخول بشكل مجهول
                 try {
-                    if (typeof __initial_auth_token !== 'undefined') {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                         await signInWithCustomToken(auth, __initial_auth_token);
                     } else {
                         await signInAnonymously(auth);
