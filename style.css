@@ -5,6 +5,7 @@
 /* Ensure text alignment is centered for table data and headers by default */
 td, th {
     text-align: center !important;
+    white-space: normal !important;
 }
 
 body {
@@ -66,7 +67,6 @@ h1, h2, h3 {
 
 .input-group input[type="text"],
 .input-group input[type="password"],
-.input-group input[type="email"], /* Added email input type */
 .input-group input[type="number"],
 .input-group input[type="date"],
 .input-group input[type="time"],
@@ -110,15 +110,6 @@ button:hover {
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
-/* Secondary button style (for register, forgot password, cancel) */
-button.secondary {
-    background-color: #6c757d;
-}
-
-button.secondary:hover {
-    background-color: #5a6268;
-}
-
 /* Disabled button style */
 button:disabled,
 button.disabled {
@@ -132,32 +123,78 @@ button.disabled {
 /* Login Page Styles */
 .login-container {
     max-width: 450px;
-    padding: 50px;
+    padding: 50px; /* Adopted from demo for better spacing */
 }
 
 .login-container h1 {
-    font-size: 32px;
-    color: #007bff;
+    font-size: 32px; /* Adopted from demo */
+    color: #007bff; /* Adopted from demo */
 }
 
-/* Removed PIN Input Fields Styling as per new authentication */
-/* .pin-input-group { ... } */
-/* .pin-input-field { ... } */
+/* PIN Input Fields Styling */
+.pin-input-group {
+    display: flex;
+    flex-direction: column; /* Stack label and inputs vertically */
+    align-items: center; /* Center align items */
+    margin-bottom: 25px;
+    width: 100%;
+}
+
+.pin-input-group .pin-inputs {
+    display: flex;
+    justify-content: center;
+    gap: 5px; /* Reduced gap for 8 inputs */
+    flex-wrap: wrap; /* Allow wrapping on small screens */
+    width: 100%;
+    margin-top: 15px;
+}
+
+.pin-input-field {
+    width: 35px; /* Adjusted width for 8 inputs */
+    height: 50px; /* Adjusted height */
+    font-size: 2em; /* Slightly smaller font */
+    text-align: center;
+    border: 2px solid #ced4da;
+    border-radius: 8px;
+    background-color: #f8f9fa;
+    color: #333;
+    transition: border-color 0.3s ease, background-color 0.3s ease, color 0.3s ease;
+    box-sizing: border-box;
+    -moz-appearance: textfield;
+}
+.pin-input-field::-webkit-outer-spin-button,
+.pin-input-field::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.pin-input-field:focus {
+    border-color: #007bff;
+    outline: none;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.error-message {
+    color: #dc3545;
+    font-size: 14px;
+    margin-top: 10px;
+    text-align: center;
+    width: 100%;
+}
 
 
 /* Main Dashboard Styles */
 .main-dashboard-container {
     max-width: 800px;
-    padding: 40px;
+    padding: 40px; /* Adopted from demo */
 }
 
 .header-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 40px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid #eee;
+    margin-bottom: 40px; /* Adopted from demo */
+    padding-bottom: 20px; /* Adopted from demo */
+    border-bottom: 1px solid #eee; /* Adopted from demo */
     flex-wrap: wrap;
     gap: 15px;
     width: 100%;
@@ -172,12 +209,12 @@ button.disabled {
 }
 
 .user-avatar {
-    width: 60px;
-    height: 60px;
+    width: 60px; /* Adopted from demo */
+    height: 60px; /* Adopted from demo */
     border-radius: 50%;
     object-fit: cover;
-    border: 3px solid #007bff;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border: 3px solid #007bff; /* Adopted from demo */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); /* Adopted from demo */
     margin-left: 15px; /* Adjust for RTL */
 }
 
@@ -189,12 +226,12 @@ button.disabled {
 }
 
 .total-hours-box {
-    background-color: #28a745;
-    color: white;
-    padding: 15px 25px;
-    border-radius: 10px;
-    text-align: center;
-    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+    background-color: #28a745; /* Adopted from demo */
+    color: white; /* Adopted from demo */
+    padding: 15px 25px; /* Adopted from demo */
+    border-radius: 10px; /* Adopted from demo */
+    text-align: center; /* Adopted from demo */
+    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3); /* Adopted from demo */
     min-width: 180px;
     display: flex;
     flex-direction: column;
@@ -215,41 +252,42 @@ button.disabled {
     color: white; /* Ensure numbers are white */
 }
 
+
 /* Dashboard Options (Start Work, Track Work buttons) */
 .dashboard-options {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 30px;
+    gap: 30px; /* Adopted from demo */
     width: 100%;
-    margin-top: 50px;
+    margin-top: 50px; /* Adopted from demo */
 }
 
 .big-option-btn {
-    background-color: #007bff;
-    padding: 40px 30px;
-    font-size: 28px;
-    font-weight: bold;
-    border-radius: 15px;
+    background-color: #007bff; /* Adopted from demo */
+    padding: 40px 30px; /* Adopted from demo */
+    font-size: 28px; /* Adopted from demo */
+    font-weight: bold; /* Adopted from demo */
+    border-radius: 15px; /* Adopted from demo */
     flex-grow: 1;
-    min-width: 250px;
-    max-width: 350px;
-    text-align: center;
-    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
+    min-width: 250px; /* Adopted from demo */
+    max-width: 350px; /* Adopted from demo */
+    text-align: center; /* Adopted from demo */
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1); /* Adopted from demo */
     margin-top: 0;
 }
 
 .big-option-btn:hover {
-    background-color: #0056b3;
-    transform: translateY(-5px);
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    background-color: #0056b3; /* Adopted from demo */
+    transform: translateY(-5px); /* Adopted from demo */
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2); /* Adopted from demo */
 }
 
 #trackWorkOption {
-    background-color: #17a2b8;
+    background-color: #17a2b8; /* Adopted from demo */
 }
 #trackWorkOption:hover {
-    background-color: #138496;
+    background-color: #138496; /* Adopted from demo */
 }
 
 /* Start Work Page */
@@ -351,7 +389,7 @@ button.disabled {
 
 
 .task-timing-buttons-section {
-    display: flex;
+    display: flex; /* Changed to flex for better control */
     flex-wrap: wrap;
     justify-content: center;
     gap: 15px;
@@ -370,7 +408,7 @@ button.disabled {
     align-items: center;
     gap: 5px;
     flex-shrink: 0;
-    flex-basis: 120px;
+    flex-basis: 120px; /* Adjusted base width to fit more buttons */
     min-height: 80px;
     justify-content: flex-start;
     position: relative;
@@ -471,16 +509,18 @@ button.disabled {
     margin-bottom: 20px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
     border-radius: 8px;
+    /* This ensures that the table itself does not overflow its container,
+       and the scrollbar appears for the container. */
 }
 
 .track-work-container table,
 .admin-section table {
-    width: 100%;
-    border-collapse: collapse;
+    width: 100%; /* Make table take full width of its container */
+    border-collapse: collapse; /* Changed to collapse for cleaner borders */
     background-color: #f8f9fa;
     border-radius: 8px;
-    overflow: hidden;
-    table-layout: auto;
+    overflow: hidden; /* Ensures rounded corners apply to table content */
+    table-layout: auto; /* Allows columns to size based on content, but can lead to overflow */
     transition: background-color 0.3s ease;
 }
 
@@ -488,15 +528,15 @@ button.disabled {
 .track-work-container table td,
 .admin-section table th,
 .admin-section table td {
-    padding: 6px 8px;
-    text-align: center;
+    padding: 6px 8px; /* Reduced padding for smaller font and more compact cells */
+    text-align: center; /* Centered text for all table cells */
     border: 1px solid #dee2e6;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 12px;
+    white-space: nowrap; /* Prevent text wrapping by default */
+    overflow: hidden; /* Hide overflow content */
+    text-overflow: ellipsis; /* Add ellipsis for overflow text */
+    font-size: 12px; /* Reduced font size for tables */
     transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
-    vertical-align: middle;
+    vertical-align: middle; /* Vertically align content in middle */
 }
 
 .track-work-container table th,
@@ -504,7 +544,7 @@ button.disabled {
     background-color: #007bff;
     color: white;
     font-weight: 600;
-    position: sticky;
+    position: sticky; /* Keep headers visible when scrolling */
     top: 0;
     z-index: 1;
 }
@@ -528,7 +568,7 @@ button.disabled {
 /* Ensure date column does not wrap */
 .track-work-container table .date-cell {
     white-space: nowrap;
-    min-width: 90px;
+    min-width: 90px; /* Ensure enough space for YYYY-MM-DD */
 }
 
 /* New: Border for daily record rows */
@@ -587,11 +627,11 @@ button.disabled {
 
 .admin-section h2 {
     text-align: right;
-    margin-top: 0;
+    margin-top: 0; /* Adopted from demo */
     margin-bottom: 20px;
     color: #007bff;
-    border-bottom: 2px solid #e9ecef;
-    padding-bottom: 10px;
+    border-bottom: 2px solid #e9ecef; /* Adopted from demo */
+    padding-bottom: 10px; /* Adopted from demo */
 }
 
 .admin-section h3 {
@@ -603,7 +643,6 @@ button.disabled {
 
 .admin-section input[type="text"],
 .admin-section input[type="password"],
-.admin-section input[type="email"], /* Added email input type */
 .admin-section input[type="number"] {
     width: 100%;
     padding: 12px;
@@ -648,78 +687,47 @@ button.disabled {
 /* Admin table specific styling */
 .admin-section table th,
 .admin-section table td {
-    padding: 6px 8px;
-    font-size: 12px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100px;
+    padding: 6px 8px; /* Reduced padding */
+    font-size: 12px; /* Smaller font size */
+    white-space: nowrap; /* Prevent text wrapping in table cells */
+    overflow: hidden; /* Hide overflow content */
+    text-overflow: ellipsis; /* Add ellipsis for overflow text */
+    max-width: 100px; /* Set a max-width to help with overflow */
 }
 
-.admin-action-btn {
-    background-color: #6c757d;
+/* Consolidated admin action button style */
+.admin-action-btntp {
+    background-color: #6c757d; /* Default color, similar to back-btn */
     color: white;
-    padding: 4px 8px;
+    padding: 4px 8px; /* Further reduced padding for smaller button */
     border-radius: 5px;
-    font-size: 10px;
+    font-size: 10px; /* Further reduced font size for button text */
     width: auto;
-    margin: 2px;
+    margin: 2px; /* Reduced margin */
     display: inline-block;
     white-space: nowrap;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1); /* Subtle shadow */
+    transition: background-color 0.3s ease, transform 0.2s ease;
 }
 
-.admin-action-btn:hover {
+.admin-action-btntp:hover {
     background-color: #5a6268;
+    transform: translateY(-1px);
 }
 
-.admin-action-btn.delete {
+.admin-action-btntp.delete {
     background-color: #dc3545;
 }
 
-.admin-action-btn.delete:hover {
+.admin-action-btntp.delete:hover {
     background-color: #c82333;
 }
 
-/* Specific style for the "Modify" button in employee rates table */
-.admin-action-btntp {
+.admin-action-btntp.primary { /* For the modify button specifically */
     background-color: #e0a800 !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 5px !important;
-    cursor: pointer !important;
-    font-size: 10px !important;
-    padding: 4px 8px !important;
-    transition: background-color 0.3s ease !important;
-    margin-bottom: 0 !important;
-    width: auto !important;
-    white-space: nowrap;
-    align-self: flex-start !important;
 }
-.admin-action-btntp:hover {
+.admin-action-btntp.primary:hover {
     background-color: #c79100 !important;
-}
-
-/* Style for the new edit icon in employee rates table */
-.edit-icon-circle {
-    display: inline-flex;
-    justify-content: center;
-    align-items: center;
-    width: 24px; /* Smaller circle */
-    height: 24px; /* Smaller circle */
-    border-radius: 50%;
-    background-color: #007bff; /* Blue background */
-    color: white;
-    font-size: 12px; /* Smaller icon */
-    cursor: pointer;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-    transition: background-color 0.3s ease, transform 0.2s ease;
-    margin-right: 5px; /* Space between icon and text */
-    vertical-align: middle; /* Align with text */
-}
-
-.edit-icon-circle:hover {
-    background-color: #0056b3;
-    transform: scale(1.1);
 }
 
 
@@ -1032,7 +1040,7 @@ body.dark-mode .modal-content select {
 body.dark-mode h1,
 body.dark-mode h2,
 body.dark-mode h3 {
-    color: #00e6e6; /* Neon Cyan */
+    color: #00e6e6;
     text-shadow: 0 0 5px rgba(0, 230, 230, 0.5);
 }
 
@@ -1040,14 +1048,14 @@ body.dark-mode .input-group label,
 body.dark-mode .modal-content label,
 body.dark-mode .work-summary-section td,
 body.dark-mode #detailedSummaryContainer p {
-    color: #00e6e6; /* Neon Cyan */
+    color: #00e6e6;
 }
 
 body.dark-mode input,
 body.dark-mode select,
 body.dark-mode textarea {
     background-color: #2a2a2a;
-    color: #00e6e6; /* Neon Cyan */
+    color: #00e6e6;
     border-color: #444;
 }
 
@@ -1091,7 +1099,7 @@ body.dark-mode .total-hours-box {
 }
 
 body.dark-mode .total-hours-box p {
-    color: #e0e0e0;
+    color: #e0e0e0; /* Ensure text is light in dark mode */
 }
 body.dark-mode .total-hours-box p span {
     color: #00e6e6; /* Neon Cyan for numbers in dark mode */
@@ -1104,7 +1112,7 @@ body.dark-mode table {
 
 body.dark-mode table th {
     background-color: #2a2a2a;
-    color: #00e6e6; /* Neon Cyan */
+    color: #00e6e6;
     border-color: #444;
 }
 
@@ -1123,12 +1131,12 @@ body.dark-mode .toast-message.error {
 }
 
 body.dark-mode .spinner {
-    border-top: 8px solid #00e6e6; /* Neon Cyan */
+    border-top: 8px solid #00e6e6;
 }
 
 body.dark-mode .lang-btn {
     background-color: #2a2a2a !important;
-    color: #00e6e6 !important; /* Neon Cyan */
+    color: #00e6e6 !important;
     border-color: #444 !important;
 }
 
@@ -1145,20 +1153,51 @@ body.dark-mode .lang-btn.active {
 /* Dark mode for total cells */
 body.dark-mode .track-work-container table .total-cell {
     background-color: #2a2a2a !important;
-    color: #00e6e6 !important; /* Neon Cyan */
+    color: #00e6e6 !important;
 }
 
 /* Dark mode for grand total footer */
 body.dark-mode #trackTasksTableFoot td.grand-total-footer-cell {
     background-color: #2a2a2a !important;
-    border-top-color: #00e6e6 !important; /* Neon Cyan */
-    color: #00e6e6 !important; /* Neon Cyan */
+    border-top-color: #00e6e6 !important;
+    color: #00e6e6 !important;
 }
 
 /* Dark mode for daily record row border */
 body.dark-mode .track-work-container table tbody .daily-record-row {
-    border-top: 2px solid #00e6e6; /* Neon Cyan */
+    border-top: 2px solid #00e6e6;
 }
+
+/* New style for the circular edit icon */
+.edit-icon-circle {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    width: 24px; /* Smaller size */
+    height: 24px; /* Smaller size */
+    border-radius: 50%;
+    background-color: #e0a800; /* Primary color for edit */
+    color: white;
+    cursor: pointer;
+    font-size: 12px; /* Smaller icon size */
+    transition: background-color 0.3s ease, transform 0.2s ease;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.edit-icon-circle:hover {
+    background-color: #c79100;
+    transform: scale(1.1);
+}
+
+body.dark-mode .edit-icon-circle {
+    background-color: #00e6e6; /* Neon Cyan in dark mode */
+    color: #121212;
+}
+
+body.dark-mode .edit-icon-circle:hover {
+    background-color: #00cccc;
+}
+
 
 body.dark-mode .admin-action-btntp {
     background-color: #00e6e6 !important; /* Neon Cyan for modify in dark mode */
@@ -1170,16 +1209,6 @@ body.dark-mode .admin-action-btntp:hover {
 body.dark-mode .time-since-last-click {
     background-color: rgba(0, 230, 230, 0.7); /* Neon Cyan semi-transparent */
     color: #121212;
-}
-
-/* Dark mode for edit icon circle */
-body.dark-mode .edit-icon-circle {
-    background-color: #00e6e6; /* Neon Cyan */
-    color: #121212;
-}
-
-body.dark-mode .edit-icon-circle:hover {
-    background-color: #00cccc;
 }
 
 
@@ -1247,6 +1276,18 @@ body.dark-mode .edit-icon-circle:hover {
         max-width: 180px;
     }
 
+    /* Adjusted for 8 PIN inputs on mobile */
+    .pin-input-group .pin-inputs {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 5px;
+    }
+    .pin-input-field {
+        width: 30px; /* Even smaller for 8 inputs on mobile */
+        height: 40px;
+        font-size: 1.5em;
+    }
+
 
     .tracking-content {
         flex-direction: column;
@@ -1312,11 +1353,5 @@ body.dark-mode .edit-icon-circle:hover {
     .admin-action-btn, .admin-action-btntp {
         font-size: 9px !important; /* Very small for mobile buttons */
         padding: 3px 6px !important;
-    }
-    /* Adjust font size for edit icon circle on smaller screens */
-    .edit-icon-circle {
-        width: 20px;
-        height: 20px;
-        font-size: 10px;
     }
 }
