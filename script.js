@@ -28,16 +28,43 @@ import {
 // Firebase Configuration (using global variables provided by Canvas environment)
 // This ensures that the app ID and Firebase config are dynamically provided
 // and not hardcoded, enhancing security and deployment flexibility.
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-    // Fallback for local development if __firebase_config is not defined
-    apiKey: "YOUR_API_KEY", // Replace with your actual Firebase API Key
-    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT_ID.appspot.com",
-    messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-    appId: "YOUR_APP_ID"
-};
+let firebaseConfig;
+if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+    try {
+        firebaseConfig = JSON.parse(__firebase_config);
+        console.log("Firebase config loaded from Canvas environment.");
+    } catch (e) {
+        console.error("Error parsing __firebase_config from Canvas environment. Using fallback.", e);
+        firebaseConfig = {
+            // Fallback for local development if __firebase_config is not defined or invalid
+            // IMPORTANT: Replace these placeholder values with your actual Firebase project credentials
+            // if you are running this application outside of the Canvas environment.
+            apiKey: "YOUR_API_KEY_HERE", // <--- THIS MUST BE A VALID API KEY FOR YOUR PROJECT
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+    }
+} else {
+    console.warn("Canvas environment variable __firebase_config is not defined. Using fallback Firebase config.");
+    firebaseConfig = {
+        // Fallback for local development if __firebase_config is not defined
+        // IMPORTANT: Replace these placeholder values with your actual Firebase project credentials
+        // if you are running this application outside of the Canvas environment.
+        apiKey: "YOUR_API_KEY_HERE", // <--- THIS MUST BE A VALID API KEY FOR YOUR PROJECT
+        authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT_ID.appspot.com",
+        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+        appId: "YOUR_APP_ID"
+    };
+}
+
+// Ensure the appId is correctly set from the firebaseConfig or fallback
+const appId = firebaseConfig.appId || (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
+
 
 // Initialize Firebase App and Services
 const app = initializeApp(firebaseConfig);
@@ -59,6 +86,8 @@ let lastClickTime = null; // For "time between clicks" feature
 const SESSION_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours in milliseconds
 const SESSION_CLOSED_BROWSER_MS = 1 * 60 * 60 * 1000; // 1 hour if browser closed
 const ADMIN_EMAIL = "admin@example.com"; // Define a fixed admin email for initial setup
+// IMPORTANT: For security, change this email and the default password ("admin123")
+// immediately after the first successful login as admin.
 
 // DOM Elements - Page Containers
 const loginPage = document.getElementById('loginPage');
@@ -918,9 +947,6 @@ const handleRegister = async () => {
             case 'auth/weak-password':
                 errorMessageKey = 'weakPassword';
                 break;
-            case 'auth/network-request-failed':
-                errorMessageKey = 'networkRequestFailed';
-                break;
             default:
                 errorMessageKey = 'authError';
                 break;
@@ -1699,7 +1725,7 @@ const renderTrackWorkPage = async () => {
                                 });
                             })
                             .join('\n');
-                        totalTimeCell.title = taskSummaryTooltip;
+                        totalTimeCell.title = tooltipContent;
 
 
                         if (!taskRowSpanHandled) {
@@ -2562,6 +2588,54 @@ const saveCustomRate = async () => {
     }
 };
 
+/**
+ * Ensures a default admin user exists in Firestore. If not, it creates one.
+ * This is crucial for initial setup and should be called once on app load.
+ */
+const ensureDefaultAdminUser = async () => {
+    showLoadingIndicator(true);
+    try {
+        const usersCollectionRef = collection(db, 'users');
+        const adminQuery = query(usersCollectionRef, where('role', '==', 'admin'), limit(1));
+        const adminSnapshot = await getDocs(adminQuery);
+
+        if (adminSnapshot.empty) {
+            console.log("No admin user found. Attempting to create default admin user.");
+            // Attempt to create the admin user in Firebase Authentication
+            try {
+                const userCredential = await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, "admin123"); // Default password
+                const user = userCredential.user;
+                await setDoc(doc(db, 'users', user.uid), {
+                    uid: user.uid,
+                    email: user.email,
+                    name: getTranslatedText('admin'),
+                    role: 'admin',
+                    createdAt: serverTimestamp()
+                });
+                showToastMessage(getTranslatedText('adminUserCreated'), 'success');
+            } catch (error) {
+                if (error.code === 'auth/email-already-in-use') {
+                    console.warn("Admin email already exists in Firebase Auth, but no 'admin' role user found in Firestore. This might indicate a corrupted state. Please ensure your Firestore security rules are correctly configured.");
+                    // In this case, the user exists in Auth but their Firestore user doc might be missing or corrupted.
+                    // The onAuthStateChanged listener will attempt to fix this on next login.
+                    showToastMessage(getTranslatedText('adminUserNotFound'), 'error'); 
+                } else {
+                    console.error("Error creating default admin user:", error);
+                    showToastMessage(getTranslatedText('errorAddingUser'), 'error');
+                }
+            }
+        } else {
+            console.log("Admin user already exists.");
+        }
+    } catch (error) {
+        console.error("Error checking for default admin user:", error);
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
+    } finally {
+        showLoadingIndicator(false);
+    }
+};
+
+
 // --- Initial Setup and Event Listeners ---
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -2569,6 +2643,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     checkConnectionStatus();
     loadDarkModePreference();
     setLanguage(currentLanguage);
+
+    // Check and create default admin user if none exists
+    await ensureDefaultAdminUser();
 
     // Initial Firebase Auth check (handled by onAuthStateChanged)
     // No need for explicit loadSession() here as onAuthStateChanged handles it.
