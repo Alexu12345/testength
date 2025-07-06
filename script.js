@@ -908,7 +908,8 @@ const renderTaskTimingButtons = () => {
             button.textContent = formatMinutesToMMSS(timing.minutes);
             button.dataset.minutes = timing.minutes;
             button.dataset.seconds = timing.seconds;
-            button.addEventListener('click', () => recordTask(timing.minutes, timing.seconds));
+            button.addEventListener('click', (event) => recordTask(timing.minutes, timing.seconds, event)); // تمرير الحدث
+            
 
             const undoButton = document.createElement('button');
             undoButton.className = 'undo-btn';
@@ -916,7 +917,7 @@ const renderTaskTimingButtons = () => {
             undoButton.style.display = 'none'; // مخفي افتراضيًا
             undoButton.addEventListener('click', (e) => {
                 e.stopPropagation(); // منع تشغيل حدث الزر الرئيسي
-                undoLastTask(timing.minutes, timing.seconds);
+                undoLastTask(timing.minutes, timing.seconds, e); // تمرير الحدث
             });
 
             const timeSinceLastClickSpan = document.createElement('span');
@@ -935,8 +936,9 @@ const renderTaskTimingButtons = () => {
  * يسجل مهمة جديدة.
  * @param {number} minutes - الدقائق المسجلة للمهمة.
  * @param {number} seconds - الثواني المسجلة للمهمة.
+ * @param {Event} event - كائن الحدث من النقر.
  */
-const recordTask = (minutes, seconds) => {
+const recordTask = (minutes, seconds, event) => {
     const now = Date.now();
     const totalMinutes = minutes + (seconds / 60);
 
@@ -949,7 +951,8 @@ const recordTask = (minutes, seconds) => {
 
         // البحث عن زر التوقيت الذي تم النقر عليه لتحديث الوقت منذ آخر نقرة
         const clickedButton = event.target;
-        const timeSinceSpan = clickedButton.nextElementSibling.nextElementSibling; // span بعد زر التراجع
+        // العنصر التالي هو زر التراجع، العنصر الذي يليه هو span الوقت
+        const timeSinceSpan = clickedButton.nextElementSibling.nextElementSibling; 
         if (timeSinceSpan) {
             timeSinceSpan.textContent = `${getTranslatedText('lastClickTime')} ${timeFormatted}`;
             timeSinceSpan.classList.add('show');
@@ -972,6 +975,7 @@ const recordTask = (minutes, seconds) => {
     const undoButton = clickedButton.nextElementSibling; // زر التراجع هو العنصر التالي
     if (undoButton) {
         undoButton.classList.add('show');
+        undoButton.style.display = 'block'; // Ensure it's visible
     }
 };
 
@@ -979,8 +983,9 @@ const recordTask = (minutes, seconds) => {
  * يتراجع عن آخر مهمة مسجلة من النوع المحدد.
  * @param {number} minutes - الدقائق الأصلية للمهمة.
  * @param {number} seconds - الثواني الأصلية للمهمة.
+ * @param {Event} event - كائن الحدث من النقر.
  */
-const undoLastTask = (minutes, seconds) => {
+const undoLastTask = (minutes, seconds, event) => {
     const totalMinutesToUndo = minutes + (seconds / 60);
     const indexToRemove = currentSessionTasks.findIndex(task =>
         task.accountId === selectedAccount.id &&
@@ -1005,6 +1010,7 @@ const undoLastTask = (minutes, seconds) => {
 
         if (!hasMoreOfThisTask) {
             clickedButton.classList.remove('show');
+            clickedButton.style.display = 'none'; // Hide it completely
         }
     }
 };
@@ -1037,6 +1043,7 @@ const updateWorkSummary = () => {
             detailedSummaryContainer.innerHTML += `<p>${taskKey}: ${formatNumberToEnglish(count)} ${getTranslatedText('tasks')}</p>`;
         }
     }
+    updateSaveButtonState(); // تحديث حالة زر الحفظ
 };
 
 /**
@@ -1089,6 +1096,15 @@ const saveWorkRecord = async () => {
     } finally {
         showLoadingIndicator(false);
         isSavingWork = false; // إعادة تعيين العلامة
+    }
+};
+
+const updateSaveButtonState = () => {
+    saveWorkBtn.disabled = currentSessionTasks.length === 0;
+    if (currentSessionTasks.length === 0) {
+        saveWorkBtn.classList.add('disabled');
+    } else {
+        saveWorkBtn.classList.remove('disabled');
     }
 };
 
@@ -1191,7 +1207,7 @@ const generateChart = (data) => {
                                 return data.labels.map(function(label, i) {
                                     const meta = chart.getDatasetMeta(0);
                                     // Corrected: Use meta.data[i]._model for Chart.js v2.x
-                                    const style = meta.data[i]._model;
+                                    const style = meta.data[i].options; // Corrected for Chart.js v3+
                                     return {
                                         text: label,
                                         fillStyle: style.backgroundColor,
@@ -1389,7 +1405,27 @@ const addUser = async () => {
  * @param {string} userIdToDelete - معرف المستخدم المراد حذفه.
  */
 const deleteUser = async (userIdToDelete) => {
-    if (!confirm(getTranslatedText('confirmDeleteUser'))) {
+    // استخدام نافذة منبثقة مخصصة بدلاً من confirm
+    const confirmDelete = await new Promise(resolve => {
+        const modal = document.createElement('div');
+        modal.classList.add('modal');
+        modal.innerHTML = `
+            <div class="modal-content">
+                <span class="close-button">&times;</span>
+                <h3>${getTranslatedText('confirmDeleteUser', { name: allUsers.find(u => u.id === userIdToDelete)?.name || '' })}</h3>
+                <button id="confirmDeleteUserBtn" class="save-work-btn">${getTranslatedText('deleteBtn')}</button>
+                <button id="cancelDeleteUserBtn" class="back-btn">${getTranslatedText('close')}</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.style.display = 'flex';
+
+        modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
+        modal.querySelector('#cancelDeleteUserBtn').onclick = () => { modal.remove(); resolve(false); };
+        modal.querySelector('#confirmDeleteUserBtn').onclick = () => { modal.remove(); resolve(true); };
+    });
+
+    if (!confirmDelete) {
         return;
     }
 
@@ -1473,7 +1509,27 @@ const addAccount = async () => {
  * @param {string} accountIdToDelete - معرف الحساب المراد حذفه.
  */
 const deleteAccount = async (accountIdToDelete) => {
-    if (!confirm(getTranslatedText('confirmDeleteAccount'))) {
+    // استخدام نافذة منبثقة مخصصة بدلاً من confirm
+    const confirmDelete = await new Promise(resolve => {
+        const modal = document.createElement('div');
+        modal.classList.add('modal');
+        modal.innerHTML = `
+            <div class="modal-content">
+                <span class="close-button">&times;</span>
+                <h3>${getTranslatedText('confirmDeleteAccount', { name: allAccounts.find(a => a.id === accountIdToDelete)?.name || '' })}</h3>
+                <button id="confirmDeleteAccountBtn" class="save-work-btn">${getTranslatedText('deleteBtn')}</button>
+                <button id="cancelDeleteAccountBtn" class="back-btn">${getTranslatedText('close')}</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.style.display = 'flex';
+
+        modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
+        modal.querySelector('#cancelDeleteAccountBtn').onclick = () => { modal.remove(); resolve(false); };
+        modal.querySelector('#confirmDeleteAccountBtn').onclick = () => { modal.remove(); resolve(true); };
+    });
+
+    if (!confirmDelete) {
         return;
     }
 
@@ -1481,7 +1537,8 @@ const deleteAccount = async (accountIdToDelete) => {
     try {
         await deleteDoc(doc(db, `artifacts/${appId}/public/data/accounts`, accountIdToDelete));
         showToastMessage(getTranslatedText('accountDeleted'), 'success');
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error deleting account:", error);
         showToastMessage(getTranslatedText('error'), 'error');
     } finally {
@@ -1582,7 +1639,27 @@ const addTaskDefinition = async () => {
  * @param {string} taskDefinitionIdToDelete - معرف تعريف المهمة المراد حذفه.
  */
 const deleteTaskDefinition = async (taskDefinitionIdToDelete) => {
-    if (!confirm(getTranslatedText('confirmDeleteTask'))) {
+    // استخدام نافذة منبثقة مخصصة بدلاً من confirm
+    const confirmDelete = await new Promise(resolve => {
+        const modal = document.createElement('div');
+        modal.classList.add('modal');
+        modal.innerHTML = `
+            <div class="modal-content">
+                <span class="close-button">&times;</span>
+                <h3>${getTranslatedText('confirmDeleteTask', { name: allTaskDefinitions.find(t => t.id === taskDefinitionIdToDelete)?.name || '' })}</h3>
+                <button id="confirmDeleteTaskBtn" class="save-work-btn">${getTranslatedText('deleteBtn')}</button>
+                <button id="cancelDeleteTaskBtn" class="back-btn">${getTranslatedText('close')}</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.style.display = 'flex';
+
+        modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
+        modal.querySelector('#cancelDeleteTaskBtn').onclick = () => { modal.remove(); resolve(false); };
+        modal.querySelector('#confirmDeleteTaskBtn').onclick = () => { modal.remove(); resolve(true); };
+    });
+
+    if (!confirmDelete) {
         return;
     }
 
@@ -1756,7 +1833,27 @@ const saveEditedRecord = async () => {
  * @param {string} recordIdToDelete - معرف السجل المراد حذفه.
  */
 const deleteWorkRecord = async (recordIdToDelete) => {
-    if (!confirm(getTranslatedText('confirmDeleteRecord'))) {
+    // استخدام نافذة منبثقة مخصصة بدلاً من confirm
+    const confirmDelete = await new Promise(resolve => {
+        const modal = document.createElement('div');
+        modal.classList.add('modal');
+        modal.innerHTML = `
+            <div class="modal-content">
+                <span class="close-button">&times;</span>
+                <h3>${getTranslatedText('confirmDeleteRecord')}</h3>
+                <button id="confirmDeleteRecordBtn" class="save-work-btn">${getTranslatedText('deleteBtn')}</button>
+                <button id="cancelDeleteRecordBtn" class="back-btn">${getTranslatedText('close')}</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.style.display = 'flex';
+
+        modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
+        modal.querySelector('#cancelDeleteRecordBtn').onclick = () => { modal.remove(); resolve(false); };
+        modal.querySelector('#confirmDeleteRecordBtn').onclick = () => { modal.remove(); resolve(true); };
+    });
+
+    if (!confirmDelete) {
         return;
     }
 
@@ -1791,6 +1888,9 @@ const renderEmployeeRatesAndTotals = () => {
         const accountId = record.accountId;
         const totalTimeMinutes = record.totalTimeMinutes;
 
+        if (!employeeAccountTotals[employeeId]) { // Ensure employee entry exists
+            employeeAccountTotals[employeeId] = {};
+        }
         if (!employeeAccountTotals[employeeId][accountId]) {
             employeeAccountTotals[employeeId][accountId] = { totalTime: 0, totalBalance: 0 };
         }
@@ -1811,7 +1911,7 @@ const renderEmployeeRatesAndTotals = () => {
     // ملء الجدول
     allUsers.forEach(user => {
         let firstRowForUser = true;
-        const accountsWorkedOn = Object.keys(employeeAccountTotals[user.id]);
+        const accountsWorkedOn = Object.keys(employeeAccountTotals[user.id] || {}); // Handle case where user has no records
 
         // Calculate overall totals for the user before rendering rows
         let userTotalHours = 0;
@@ -1852,7 +1952,7 @@ const renderEmployeeRatesAndTotals = () => {
             const row = employeeRatesTableBody.insertRow();
             row.innerHTML = `
                 <td>
-                    <button class="edit-icon-circle" data-employee-id="${user.id}" data-account-id="${accountId}">
+                    <button class="edit-icon-circle admin-action-btntp" data-employee-id="${user.id}" data-account-id="${accountId}">
                         <i class="fas fa-dollar-sign"></i>
                     </button>
                 </td>
@@ -2050,9 +2150,71 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // مستمعي أحداث صفحة بدء العمل
     if (confirmSelectionBtn) confirmSelectionBtn.addEventListener('click', handleConfirmSelection);
-    if (backToDashboardFromPopupBtn) backToDashboardFromPopupBtn.addEventListener('click', () => showPage(mainDashboard));
+    if (backToDashboardFromPopupBtn) backToDashboardFromPopupBtn.addEventListener('click', () => {
+        if (currentSessionTasks.length > 0 && !isSavingWork) {
+            // استخدام نافذة منبثقة مخصصة بدلاً من confirm
+            const confirmDiscard = new Promise(resolve => {
+                const modal = document.createElement('div');
+                modal.classList.add('modal');
+                modal.innerHTML = `
+                    <div class="modal-content">
+                        <span class="close-button">&times;</span>
+                        <h3>${getTranslatedText('unsavedTasksWarning')}</h3>
+                        <button id="confirmDiscardBtn" class="save-work-btn">${getTranslatedText('backToDashboard')}</button>
+                        <button id="cancelDiscardBtn" class="back-btn">${getTranslatedText('close')}</button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                modal.style.display = 'flex';
+
+                modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
+                modal.querySelector('#cancelDiscardBtn').onclick = () => { modal.remove(); resolve(false); };
+                modal.querySelector('#confirmDiscardBtn').onclick = () => { modal.remove(); resolve(true); };
+            });
+
+            confirmDiscard.then(result => {
+                if (result) {
+                    currentSessionTasks = [];
+                    showPage(mainDashboard);
+                }
+            });
+        } else {
+            showPage(mainDashboard);
+        }
+    });
     if (saveWorkBtn) saveWorkBtn.addEventListener('click', saveWorkRecord);
-    if (backToDashboardFromStartWorkBtn) backToDashboardFromStartWorkBtn.addEventListener('click', () => showPage(mainDashboard));
+    if (backToDashboardFromStartWorkBtn) backToDashboardFromStartWorkBtn.addEventListener('click', () => {
+        if (currentSessionTasks.length > 0 && !isSavingWork) {
+            // استخدام نافذة منبثقة مخصصة بدلاً من confirm
+            const confirmDiscard = new Promise(resolve => {
+                const modal = document.createElement('div');
+                modal.classList.add('modal');
+                modal.innerHTML = `
+                    <div class="modal-content">
+                        <span class="close-button">&times;</span>
+                        <h3>${getTranslatedText('unsavedTasksWarning')}</h3>
+                        <button id="confirmDiscardBtn" class="save-work-btn">${getTranslatedText('backToDashboard')}</button>
+                        <button id="cancelDiscardBtn" class="back-btn">${getTranslatedText('close')}</button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                modal.style.display = 'flex';
+
+                modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
+                modal.querySelector('#cancelDiscardBtn').onclick = () => { modal.remove(); resolve(false); };
+                modal.querySelector('#confirmDiscardBtn').onclick = () => { modal.remove(); resolve(true); };
+            });
+
+            confirmDiscard.then(result => {
+                if (result) {
+                    currentSessionTasks = [];
+                    showPage(mainDashboard);
+                }
+            });
+        } else {
+            showPage(mainDashboard);
+        }
+    });
 
     // مستمعي أحداث صفحة متابعة العمل
     if (backToDashboardFromTrackBtn) backToDashboardFromTrackBtn.addEventListener('click', () => showPage(mainDashboard));
