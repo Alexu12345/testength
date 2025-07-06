@@ -2,6 +2,13 @@
 *, *::before, *::after {
     box-sizing: border-box;
 }
+
+/* Fix for CSS warning: Set direction and text-align on :root and html */
+:root, html {
+    direction: rtl; /* Default to RTL */
+    text-align: right; /* Default text alignment for RTL */
+}
+
 /* Ensure text alignment is centered for table data and headers by default */
 td, th {
     text-align: center !important;
@@ -18,11 +25,22 @@ body {
     margin: 0;
     padding: 20px;
     box-sizing: border-box;
-    direction: rtl; /* Default to RTL */
-    text-align: right; /* Default text alignment for RTL */
+    /* direction: rtl;  Moved to :root */
+    /* text-align: right; Moved to :root */
     color: #333;
     transition: background-color 0.3s ease, color 0.3s ease; /* Smooth transition for dark mode */
 }
+
+/* Hide spin buttons for number inputs */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+input[type="number"] {
+    -moz-appearance: textfield; /* Firefox */
+}
+
 
 /* Dark Mode Styles */
 body.dark-mode {
