@@ -35,12 +35,12 @@ try {
         // Fallback for local development if __firebase_config is not defined or invalid
         // IMPORTANT: Replace these placeholder values with your actual Firebase project credentials
         // if you are running this application outside of the Canvas environment.
-        apiKey: "YOUR_API_KEY_HERE", // <--- THIS MUST BE A VALID API KEY FOR YOUR PROJECT
-        authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-        projectId: "YOUR_PROJECT_ID",
-        storageBucket: "YOUR_PROJECT_ID.appspot.com",
-        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-        appId: "YOUR_APP_ID"
+        apiKey: "AIzaSyBu_MfB_JXvzBFaKY-Yxze1JotejU--4as",
+        authDomain: "worktrackerapp-a32af.firebaseapp.com",
+        projectId: "worktrackerapp-a32af",
+        storageBucket: "worktrackerapp-a32af.firebasestorage.app",
+        messagingSenderId: "246595598451",
+        appId: "1:246595598451:web:c6842f1618dffe765a5206"
     };
 }
 
@@ -77,7 +77,7 @@ const adminPanelPage = document.getElementById('adminPanelPage');
 
 // DOM Elements - Login Page (Updated for PIN inputs)
 const pinInputs = [];
-for (let i = 1; i <= 8; i++) {
+for (let i = 1; i <= 8; i++) { // Corrected to 8 PIN inputs
     pinInputs.push(document.getElementById(`pinInput${i}`));
 }
 const loginBtn = document.getElementById('loginBtn'); // Re-added for clarity, though login is automatic on 8 digits
@@ -2500,9 +2500,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         input.addEventListener('input', () => {
             // Allow only digits
             input.value = input.value.replace(/\D/g, '');
+
+            // Move focus to the next input if a digit is entered and it's not the last field
             if (input.value.length === 1 && index < pinInputs.length - 1) {
                 pinInputs[index + 1].focus();
             }
+
             // If all 8 digits are entered, attempt login
             if (pinInputs.every(i => i.value.length === 1)) {
                 handleLogin();
