@@ -1,56 +1,38 @@
-// Import Firebase SDKs (updated to include Auth)
+// Import Firebase SDKs (removed Auth imports as we are reverting to PIN-based login)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { 
-    getAuth, 
-    signInWithEmailAndPassword, 
-    createUserWithEmailAndPassword, 
-    signOut, 
-    sendPasswordResetEmail,
-    onAuthStateChanged // Listen for auth state changes
-} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { 
-    getFirestore, 
-    doc, 
-    collection, 
-    getDocs, 
-    setDoc, 
-    updateDoc, 
-    deleteDoc, 
-    query, 
-    where, 
-    orderBy, 
-    limit, 
-    Timestamp, 
-    serverTimestamp, 
-    addDoc 
+import {
+    getFirestore,
+    doc,
+    collection,
+    getDocs,
+    setDoc,
+    updateDoc,
+    deleteDoc,
+    query,
+    where,
+    orderBy,
+    limit,
+    Timestamp,
+    serverTimestamp,
+    addDoc
 } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
 // Firebase Configuration (using global variables provided by Canvas environment)
 // This ensures that the app ID and Firebase config are dynamically provided
 // and not hardcoded, enhancing security and deployment flexibility.
 let firebaseConfig;
-if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-    try {
+try {
+    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
         firebaseConfig = JSON.parse(__firebase_config);
         console.log("Firebase config loaded from Canvas environment.");
-    } catch (e) {
-        console.error("Error parsing __firebase_config from Canvas environment. Using fallback.", e);
-        firebaseConfig = {
-            // Fallback for local development if __firebase_config is not defined or invalid
-            // IMPORTANT: Replace these placeholder values with your actual Firebase project credentials
-            // if you are running this application outside of the Canvas environment.
-            apiKey: "AIzaSyBu_MfB_JXvzBFaKY-Yxze1JotejU--4as",
-            authDomain: "worktrackerapp-a32af.firebaseapp.com",
-            projectId: "worktrackerapp-a32af",
-            storageBucket: "worktrackerapp-a32af.firebasestorage.app",
-            messagingSenderId: "246595598451",
-            appId: "1:246595598451:web:c6842f1618dffe765a5206"
-        };
+    } else {
+        console.warn("Canvas environment variable __firebase_config is not defined. Using fallback Firebase config.");
+        throw new Error("No Canvas config"); // Force fallback to ensure placeholder is checked
     }
-} else {
-    console.warn("Canvas environment variable __firebase_config is not defined. Using fallback Firebase config.");
+} catch (e) {
+    console.error("Error parsing __firebase_config or not defined. Using fallback Firebase config.", e);
     firebaseConfig = {
-        // Fallback for local development if __firebase_config is not defined
+        // Fallback for local development if __firebase_config is not defined or invalid
         // IMPORTANT: Replace these placeholder values with your actual Firebase project credentials
         // if you are running this application outside of the Canvas environment.
         apiKey: "YOUR_API_KEY_HERE", // <--- THIS MUST BE A VALID API KEY FOR YOUR PROJECT
@@ -66,13 +48,12 @@ if (typeof __firebase_config !== 'undefined' && __firebase_config) {
 const appId = firebaseConfig.appId || (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
 
 
-// Initialize Firebase App and Services
+// Initialize Firebase App and Firestore Database (Auth is no longer used for PIN login)
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const auth = getAuth(app); // Initialize Firebase Auth
 
 // Global state variables
-let loggedInUser = null; // Stores current user data { uid, email, role, name }
+let loggedInUser = null; // Stores current user data { id, name, role }
 let allAccounts = []; // Stores all account definitions from Firestore
 let allTaskDefinitions = []; // Stores all task definitions from Firestore
 let allUsers = []; // Stores all user definitions from Firestore (for admin panel and filters)
@@ -85,9 +66,7 @@ let lastClickTime = null; // For "time between clicks" feature
 // Constants
 const SESSION_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours in milliseconds
 const SESSION_CLOSED_BROWSER_MS = 1 * 60 * 60 * 1000; // 1 hour if browser closed
-const ADMIN_EMAIL = "admin@example.com"; // Define a fixed admin email for initial setup
-// IMPORTANT: For security, change this email and the default password ("admin123")
-// immediately after the first successful login as admin.
+const ADMIN_PIN = "12345678"; // Default admin PIN. IMPORTANT: Change this for security!
 
 // DOM Elements - Page Containers
 const loginPage = document.getElementById('loginPage');
@@ -96,12 +75,13 @@ const startWorkPage = document.getElementById('startWorkPage');
 const trackWorkPage = document.getElementById('trackWorkPage');
 const adminPanelPage = document.getElementById('adminPanelPage');
 
-// DOM Elements - Login/Authentication Page
-const emailInput = document.getElementById('emailInput');
-const passwordInput = document.getElementById('passwordInput');
-const loginBtn = document.getElementById('loginBtn');
-const registerBtn = document.getElementById('registerBtn');
-const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
+// DOM Elements - Login Page (Updated for PIN inputs)
+const pinInputs = [];
+for (let i = 1; i <= 8; i++) {
+    pinInputs.push(document.getElementById(`pinInput${i}`));
+}
+const loginBtn = document.getElementById('loginBtn'); // Re-added for clarity, though login is automatic on 8 digits
+const loginError = document.getElementById('loginError'); // Re-added for error message display
 
 // DOM Elements - Main Dashboard
 const userNameDisplay = document.getElementById('userNameDisplay');
@@ -135,8 +115,7 @@ const backToDashboardFromTrackBtn = document.getElementById('backToDashboardFrom
 
 // DOM Elements - Admin Panel
 const newUserNameInput = document.getElementById('newUserNameInput');
-const newUserEmailInput = document.getElementById('newUserEmailInput'); // New: Email input for user creation
-const newUserPasswordInput = document.getElementById('newUserPasswordInput'); // New: Password input for user creation
+const newUserPINInput = document.getElementById('newUserPINInput'); // Changed from newUserEmailInput/newUserPasswordInput
 const addUserBtn = document.getElementById('addUserBtn');
 const usersTableBody = document.getElementById('usersTableBody');
 
@@ -160,6 +139,7 @@ const employeeRatesTableBody = document.getElementById('employeeRatesTableBody')
 
 // DOM Elements - Modals
 const editRecordModal = document.getElementById('editRecordModal');
+const closeEditRecordModalBtn = editRecordModal.querySelector('.close-button');
 const editAccountSelect = document.getElementById('editAccountSelect');
 const editTaskTypeSelect = document.getElementById('editTaskTypeSelect');
 const editTotalTasksCount = document.getElementById('editTotalTasksCount');
@@ -229,6 +209,7 @@ const showPage = (pageElement) => {
     editRecordModal.style.display = 'none';
     editEmployeeRateModal.style.display = 'none';
     genericModal.style.display = 'none'; // Ensure generic modal is hidden
+    loginError.style.display = 'none'; // Hide login error message
 };
 
 /**
@@ -326,12 +307,12 @@ const formatMinutesToMMSS = (decimalMinutes) => {
     const totalSeconds = Math.round(decimalMinutes * 60); // Convert to total seconds and round
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    
+
     // Handle cases where seconds might round up to 60 (e.g., 59.9999 -> 60)
     if (seconds === 60) {
         return `${minutes + 1}:00`;
     }
-    
+
     const formattedMinutes = String(minutes); // No need for padStart(2, '0') if single digit is acceptable
     const formattedSeconds = String(seconds).padStart(2, '0');
     return `${formattedMinutes}:${formattedSeconds}`;
@@ -359,23 +340,20 @@ const formatTotalMinutesToHHMMSS = (totalMinutes) => {
 
 /**
  * Language translation object. Contains translations for Arabic and English.
- * New keys added for authentication and improved modal messages.
+ * Updated keys for PIN login and removed email/password related translations.
  */
 const translations = {
     'ar': {
         'loginTitle': 'تسجيل الدخول',
-        'emailLabel': 'البريد الإلكتروني:',
-        'emailPlaceholder': 'أدخل بريدك الإلكتروني',
-        'passwordLabel': 'كلمة المرور:',
-        'passwordPlaceholder': 'أدخل كلمة المرور',
-        'loginBtn': 'دخول',
-        'registerBtn': 'تسجيل حساب جديد',
-        'forgotPasswordBtn': 'نسيت كلمة المرور؟',
+        'pinLabel': 'أدخل رقم الـ PIN:', // New
+        'pinError': 'الرجاء إدخال رقم PIN مكون من 8 أرقام فقط.', // New
+        'pinIncorrect': 'رقم PIN غير صحيح. الرجاء المحاولة مرة أخرى.', // New
+        'loginError': 'حدث خطأ أثناء تسجيل الدخول. الرجاء المحاولة لاحقاً.', // Generic login error
         'admin': 'المدير',
         'totalHoursTitle': 'إجمالي ساعات العمل:',
         'hoursUnit': 'ساعة',
-        'totalBalanceTitle': 'إجمالي الرصيد:', 
-        'currencyUnit': 'جنيه', 
+        'totalBalanceTitle': 'إجمالي الرصيد:',
+        'currencyUnit': 'جنيه',
         'startWorkOption': 'بدء العمل',
         'trackWorkOption': 'متابعة العمل',
         'chooseTask': 'اختر المهمة',
@@ -393,32 +371,31 @@ const translations = {
         'errorSavingWork': 'حدث خطأ أثناء حفظ العمل. الرجاء المحاولة مرة أخرى.',
         'unsavedTasksWarning': 'لديك مهام غير محفوظة. هل أنت متأكد من العودة؟ سيتم فقدان البيانات غير المحفوظة.',
         'trackWorkTitle': 'متابعة العمل',
-        'serialColumn': 'المسلسل', 
-        'dateColumn': 'التاريخ', 
-        'dailyTotalTimeColumn': 'إجمالي اليوم', 
-        'timingValueColumn': 'التوقيت (دقيقة)', 
-        'taskTimingsSummary': 'ملخص توقيتات المهمة', 
-        'totalForTaskColumn': 'إجمالي المهمة', 
-        'totalForAccountColumn': 'إجمالي الحساب', 
-        'taskColumn': 'المهمة', 
-        'totalTimeMinutesColumn': 'إجمالي الوقت (دقيقة)', 
-        'completedTasksColumn': 'عدد المهام المنجزة', 
+        'serialColumn': 'المسلسل',
+        'dateColumn': 'التاريخ',
+        'dailyTotalTimeColumn': 'إجمالي اليوم',
+        'timingValueColumn': 'التوقيت (دقيقة)',
+        'taskTimingsSummary': 'ملخص توقيتات المهمة',
+        'totalForTaskColumn': 'إجمالي المهمة',
+        'totalForAccountColumn': 'إجمالي الحساب',
+        'taskColumn': 'المهمة',
+        'totalTimeMinutesColumn': 'إجمالي الوقت (دقيقة)',
+        'completedTasksColumn': 'عدد المهام المنجزة',
         'noDataToShow': 'لا توجد بيانات لعرضها',
         'adminPanelTitle': 'لوحة تحكم المدير',
         'manageUsers': 'إدارة المستخدمين',
         'newUserName': 'اسم المستخدم الجديد',
-        'newUserEmail': 'البريد الإلكتروني للمستخدم', // New
-        'newUserPassword': 'كلمة المرور للمستخدم (6+ أحرف)', // New
+        'newUserPIN': 'رمز PIN للمستخدم (8 أرقام)', // Changed from newUserEmail/newUserPassword
         'addUserBtn': 'إضافة مستخدم',
         'currentUsers': 'المستخدمون الحاليون:',
         'nameColumn': 'الاسم',
-        'emailColumn': 'البريد الإلكتروني', // New
+        'pinColumn': 'PIN', // New
         'actionsColumn': 'إجراءات',
         'deleteBtn': 'حذف',
         'confirmDeleteUser': 'هل أنت متأكد من حذف المستخدم {name}؟',
         'userDeletedSuccess': 'تم حذف المستخدم بنجاح.',
-        'enterUserData': 'الرجاء إدخال اسم المستخدم والبريد الإلكتروني وكلمة المرور (6+ أحرف).', // Updated
-        'emailAlreadyInUse': 'هذا البريد الإلكتروني مستخدم بالفعل. الرجاء اختيار بريد آخر.', // New
+        'enterUserNamePin': 'الرجاء إدخال اسم مستخدم ورمز PIN مكون من 8 أرقام.', // Updated
+        'pinAlreadyUsed': 'رمز PIN هذا مستخدم بالفعل. الرجاء اختيار رمز آخر.', // New
         'userAddedSuccess': 'تم إضافة المستخدم بنجاح!',
         'errorAddingUser': 'حدث خطأ أثناء إضافة المستخدم.',
         'manageAccounts': 'إدارة الحسابات',
@@ -464,7 +441,7 @@ const translations = {
         'noMatchingRecords': 'لا توجد سجلات عمل مطابقة.',
         'userColumn': 'المستخدم',
         'dateColumn': 'التاريخ',
-        'timeColumn': 'الوقت', 
+        'timeColumn': 'الوقت',
         'confirmDeleteRecord': 'هل أنت متأكد من حذف هذا السجل للمستخدم {name}؟',
         'recordDeletedSuccess': 'تم حذف السجل بنجاح.',
         'errorDeletingRecord': 'حدث خطأ أثناء حذف السجل.',
@@ -482,10 +459,10 @@ const translations = {
         'hello': 'مرحباً، ',
         'taskDetailsByTiming': 'تفاصيل المهام حسب التوقيت:',
         'tasksTiming': 'مهام {timing} دقيقة: {count} مهمة (إجمالي {totalTime} دقيقة)',
-        'grandTotal': 'الإجمالي الكلي', 
-        'totalTasksOverall': 'إجمالي عدد المهام', 
-        'totalTimeOverall': ' الوقت', 
-        'totalBalanceOverall': ' الرصيد', 
+        'grandTotal': 'الإجمالي الكلي',
+        'totalTasksOverall': 'إجمالي عدد المهام',
+        'totalTimeOverall': ' الوقت',
+        'totalBalanceOverall': ' الرصيد',
         'sessionWarning': 'ستنتهي جلستك بعد {duration} أو {closedBrowserDuration} من إغلاق المتصفح. هل ترغب في تسجيل الخروج الآن؟',
         'manageEmployeeRates': 'إدارة أسعار الموظفين والإجماليات',
         'employeeNameColumn': 'الموظف',
@@ -505,42 +482,26 @@ const translations = {
         'unauthorizedAccess': 'وصول غير مصرح به. يرجى تسجيل الدخول كمسؤول.',
         'error': 'خطأ',
         'close': 'إغلاق',
-        'ok': 'موافق', // New
-        'cancel': 'إلغاء', // New
-        'info': 'معلومات', // New
+        'ok': 'موافق',
+        'cancel': 'إلغاء',
+        'info': 'معلومات',
         'accountTotalTimeColumnShort': 'وقت الحساب',
         'accountBalanceColumn': 'رصيد الحساب',
         'timeSinceLastClick': 'آخر نقرة منذ {minutes} دقيقة و {seconds} ثانية.',
         'tasksSummaryTooltip': '{count} مهمات بـ {time} دقائق',
-        'registrationSuccess': 'تم تسجيل حسابك بنجاح! يمكنك الآن تسجيل الدخول.', // New
-        'registrationError': 'حدث خطأ أثناء التسجيل. الرجاء المحاولة مرة أخرى.', // New
-        'passwordResetSent': 'تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني.', // New
-        'passwordResetError': 'حدث خطأ أثناء إرسال رابط إعادة تعيين كلمة المرور.', // New
-        'invalidEmail': 'الرجاء إدخال بريد إلكتروني صالح.', // New
-        'weakPassword': 'كلمة المرور ضعيفة جداً (يجب أن تكون 6 أحرف على الأقل).', // New
-        'userNotFound': 'المستخدم غير موجود.', // New
-        'wrongPassword': 'كلمة المرور غير صحيحة.', // New
-        'tooManyRequests': 'تم حظر الوصول مؤقتًا بسبب كثرة المحاولات الفاشلة. الرجاء المحاولة لاحقاً.', // New
-        'networkRequestFailed': 'فشل الاتصال بالشبكة. يرجى التحقق من اتصالك بالإنترنت.', // New
-        'operationNotAllowed': 'هذه العملية غير مسموح بها. يرجى الاتصال بالمسؤول.', // New
-        'authError': 'خطأ في المصادقة: {message}', // New generic auth error
-        'adminUserNotFound': 'لم يتم العثور على مستخدم المسؤول.', // New
-        'adminUserCreated': 'تم إنشاء مستخدم المسؤول الافتراضي بنجاح.' // New
+        'invalidApiKeyPlaceholder': 'خطأ حرج: مفتاح API الخاص بـ Firebase لا يزال قيمة افتراضية. يرجى استبدال "YOUR_API_KEY_HERE" بمفتاح API الفعلي لمشروع Firebase الخاص بك.'
     },
     'en': {
         'loginTitle': 'Login',
-        'emailLabel': 'Email:',
-        'emailPlaceholder': 'Enter your email',
-        'passwordLabel': 'Password:',
-        'passwordPlaceholder': 'Enter your password',
-        'loginBtn': 'Login',
-        'registerBtn': 'Register New Account',
-        'forgotPasswordBtn': 'Forgot Password?',
+        'pinLabel': 'Enter PIN:',
+        'pinError': 'Please enter an 8-digit PIN only.',
+        'pinIncorrect': 'Incorrect PIN. Please try again.',
+        'loginError': 'An error occurred during login. Please try again later.',
         'admin': 'Admin',
         'totalHoursTitle': 'Total Work Hours:',
         'hoursUnit': 'hours',
-        'totalBalanceTitle': 'Total Balance:', 
-        'currencyUnit': 'EGP', 
+        'totalBalanceTitle': 'Total Balance:',
+        'currencyUnit': 'EGP',
         'startWorkOption': 'Start Work',
         'trackWorkOption': 'Track Work',
         'chooseTask': 'Select Task',
@@ -558,32 +519,31 @@ const translations = {
         'errorSavingWork': 'An error occurred while saving work. Please try again.',
         'unsavedTasksWarning': 'You have unsaved tasks. Are you sure you want to go back? Unsaved data will be lost.',
         'trackWorkTitle': 'Work Tracking',
-        'serialColumn': 'Serial', 
-        'dateColumn': 'Date', 
-        'dailyTotalTimeColumn': 'Daily Total Time', 
-        'timingValueColumn': 'Timing (minutes)', 
-        'taskTimingsSummary': 'Task Timings Summary', 
-        'totalForTaskColumn': 'Total for Task', 
-        'totalForAccountColumn': 'Total for Account', 
-        'taskColumn': 'Task', 
-        'totalTimeMinutesColumn': 'Total Time (minutes)', 
-        'completedTasksColumn': 'Completed Tasks', 
+        'serialColumn': 'Serial',
+        'dateColumn': 'Date',
+        'dailyTotalTimeColumn': 'Daily Total Time',
+        'timingValueColumn': 'Timing (minutes)',
+        'taskTimingsSummary': 'Task Timings Summary',
+        'totalForTaskColumn': 'Total for Task',
+        'totalForAccountColumn': 'Total for Account',
+        'taskColumn': 'Task',
+        'totalTimeMinutesColumn': 'Total Time (minutes)',
+        'completedTasksColumn': 'Completed Tasks',
         'noDataToShow': 'No data to display',
         'adminPanelTitle': 'Admin Panel',
         'manageUsers': 'Manage Users',
         'newUserName': 'New User Name',
-        'newUserEmail': 'User Email',
-        'newUserPassword': 'User Password (6+ chars)',
+        'newUserPIN': 'User PIN (8 digits)',
         'addUserBtn': 'Add User',
         'currentUsers': 'Current Users:',
         'nameColumn': 'Name',
-        'emailColumn': 'Email',
+        'pinColumn': 'PIN',
         'actionsColumn': 'Actions',
         'deleteBtn': 'Delete',
         'confirmDeleteUser': 'Are you sure you want to delete user {name}?',
         'userDeletedSuccess': 'User deleted successfully.',
-        'enterUserData': 'Please enter user name, email, and password (6+ chars).',
-        'emailAlreadyInUse': 'This email is already in use. Please choose another.',
+        'enterUserNamePin': 'Please enter a username and an 8-digit PIN.',
+        'pinAlreadyUsed': 'This PIN is already in use. Please choose another.',
         'userAddedSuccess': 'User added successfully!',
         'errorAddingUser': 'An error occurred while adding the user.',
         'manageAccounts': 'Manage Accounts',
@@ -629,7 +589,7 @@ const translations = {
         'noMatchingRecords': 'No matching work records.',
         'userColumn': 'User',
         'dateColumn': 'Date',
-        'timeColumn': 'Time', 
+        'timeColumn': 'Time',
         'confirmDeleteRecord': 'Are you sure you want to delete this record for user {name}?',
         'recordDeletedSuccess': 'Record deleted successfully.',
         'errorDeletingRecord': 'An error occurred while deleting the record.',
@@ -647,10 +607,10 @@ const translations = {
         'hello': 'Hi, ',
         'taskDetailsByTiming': 'Task Details by Timing:',
         'tasksTiming': '{count} tasks of {timing} minutes (Total {totalTime} minutes)',
-        'grandTotal': 'Grand Total', 
-        'totalTasksOverall': 'Total Tasks Overall', 
-        'totalTimeOverall': 'Total Time Overall', 
-        'totalBalanceOverall': 'Total Balance Overall', 
+        'grandTotal': 'Grand Total',
+        'totalTasksOverall': 'Total Tasks Overall',
+        'totalTimeOverall': 'Total Time Overall',
+        'totalBalanceOverall': 'Total Balance Overall',
         'sessionWarning': 'Your session will expire in {duration} or {closedBrowserDuration} after closing the browser. Do you want to log out now?',
         'manageEmployeeRates': 'Manage Employee Rates & Totals',
         'employeeNameColumn': 'Employee',
@@ -677,20 +637,7 @@ const translations = {
         'accountBalanceColumn': 'Account Balance',
         'timeSinceLastClick': 'Last click was {minutes} minutes and {seconds} seconds ago.',
         'tasksSummaryTooltip': '{count} tasks of {time} minutes',
-        'registrationSuccess': 'Account registered successfully! You can now log in.',
-        'registrationError': 'An error occurred during registration. Please try again.',
-        'passwordResetSent': 'Password reset link sent to your email.',
-        'passwordResetError': 'An error occurred while sending the password reset link.',
-        'invalidEmail': 'Please enter a valid email address.',
-        'weakPassword': 'Password is too weak (should be at least 6 characters).',
-        'userNotFound': 'User not found.',
-        'wrongPassword': 'Wrong password.',
-        'tooManyRequests': 'Access to this account has been temporarily disabled due to many failed login attempts. You can immediately restore it by resetting your password or try again later.',
-        'networkRequestFailed': 'Network request failed. Please check your internet connection.',
-        'operationNotAllowed': 'This operation is not allowed. Please contact the administrator.',
-        'authError': 'Authentication Error: {message}',
-        'adminUserNotFound': 'Admin user not found.',
-        'adminUserCreated': 'Default admin user created successfully.'
+        'invalidApiKeyPlaceholder': 'Critical Error: Firebase API Key is still a placeholder. Please replace "YOUR_API_KEY_HERE" with your actual Firebase project API key.'
     }
 };
 
@@ -705,7 +652,7 @@ const setLanguage = (lang) => {
     localStorage.setItem('appLanguage', lang);
     applyTranslations();
     document.documentElement.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
-    
+
     // Re-render chart if it exists to update labels direction and colors
     if (taskChart) {
         taskChart.options.plugins.legend.rtl = (lang === 'ar');
@@ -715,6 +662,10 @@ const setLanguage = (lang) => {
         taskChart.options.plugins.title.color = isDarkMode ? '#cadcff' : '#2c3e50';
         taskChart.update();
     }
+    // Set PIN input direction to LTR regardless of overall page direction for number entry
+    pinInputs.forEach(input => {
+        input.style.direction = 'ltr';
+    });
 };
 
 /**
@@ -837,6 +788,12 @@ document.querySelectorAll('.close-button').forEach(button => {
         const modalId = event.target.dataset.modalClose;
         if (modalId) {
             document.getElementById(modalId).style.display = 'none';
+        } else {
+            // Fallback for modals without data-modal-close (like editRecordModal's default close button)
+            const parentModal = event.target.closest('.modal');
+            if (parentModal) {
+                parentModal.style.display = 'none';
+            }
         }
     });
 });
@@ -849,144 +806,61 @@ window.addEventListener('click', (event) => {
 });
 
 
-// --- Firebase Authentication & Session Management ---
+// --- PIN-based Authentication & Session Management ---
 
 /**
- * Handles user login with email and password.
+ * Handles user login with PIN.
  */
 const handleLogin = async () => {
-    const email = emailInput.value.trim();
-    const password = passwordInput.value.trim();
+    const fullPin = pinInputs.map(input => input.value).join('');
+    loginError.style.display = 'none'; // Hide any previous error message
 
-    if (!email || !password) {
-        await showGenericModal('error', 'invalidEmail');
+    if (fullPin.length !== 8 || !/^\d+$/.test(fullPin)) { // Check for 8 digits only
+        loginError.textContent = getTranslatedText('pinError');
+        loginError.style.display = 'block';
         return;
     }
 
     showLoadingIndicator(true);
     try {
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        // onAuthStateChanged listener will handle updating loggedInUser and showing the correct page
+        // Check for admin PIN first
+        if (fullPin === ADMIN_PIN) {
+            loggedInUser = { id: 'admin', name: getTranslatedText('admin'), role: 'admin' };
+            saveSession(loggedInUser); // Save admin session
+            await fetchAllStaticData(); // Fetch all static data once authenticated
+            showPage(adminPanelPage);
+            await renderAdminPanel();
+            pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
+            return;
+        }
+
+        // Check for regular user PIN in Firestore
+        const usersCollectionRef = collection(db, 'users');
+        const userQueryRef = query(usersCollectionRef, where('pin', '==', fullPin), limit(1));
+        const userQuerySnapshot = await getDocs(userQueryRef);
+
+        if (!userQuerySnapshot.empty) {
+            loggedInUser = getDocData(userQuerySnapshot.docs[0]);
+            // Ensure user has a role, default to 'user' if not explicitly set
+            if (!loggedInUser.role) {
+                loggedInUser.role = 'user';
+            }
+            saveSession(loggedInUser); // Save user session
+            await fetchAllStaticData(); // Fetch all static data once authenticated
+            showPage(mainDashboard);
+            await renderMainDashboard();
+            pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
+            return;
+        }
+
+        // If no match found
+        loginError.textContent = getTranslatedText('pinIncorrect');
+        loginError.style.display = 'block';
+
     } catch (error) {
         console.error("Login error:", error);
-        let errorMessageKey = 'loginError';
-        switch (error.code) {
-            case 'auth/invalid-email':
-            case 'auth/user-disabled':
-            case 'auth/user-not-found':
-                errorMessageKey = 'userNotFound';
-                break;
-            case 'auth/wrong-password':
-                errorMessageKey = 'wrongPassword';
-                break;
-            case 'auth/too-many-requests':
-                errorMessageKey = 'tooManyRequests';
-                break;
-            case 'auth/network-request-failed':
-                errorMessageKey = 'networkRequestFailed';
-                break;
-            default:
-                errorMessageKey = 'authError';
-                break;
-        }
-        await showGenericModal('error', errorMessageKey, { message: error.message });
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
-
-/**
- * Handles new user registration with email and password.
- */
-const handleRegister = async () => {
-    const email = emailInput.value.trim();
-    const password = passwordInput.value.trim();
-
-    if (!email || !password) {
-        await showGenericModal('error', 'invalidEmail');
-        return;
-    }
-    if (password.length < 6) {
-        await showGenericModal('error', 'weakPassword');
-        return;
-    }
-
-    showLoadingIndicator(true);
-    try {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-
-        // Store user data in Firestore (excluding sensitive info like password)
-        // Default role is 'user', unless it's the predefined admin email
-        const userRole = (email === ADMIN_EMAIL) ? 'admin' : 'user';
-        await setDoc(doc(db, 'users', user.uid), {
-            uid: user.uid,
-            email: user.email,
-            name: user.email.split('@')[0], // Default name from email
-            role: userRole,
-            createdAt: serverTimestamp()
-        });
-
-        // If it's the admin user, set their custom name
-        if (userRole === 'admin') {
-            await updateDoc(doc(db, 'users', user.uid), { name: getTranslatedText('admin') });
-        }
-
-        await showGenericModal('info', 'registrationSuccess');
-        // No need to call logout, onAuthStateChanged will handle the state
-    } catch (error) {
-        console.error("Registration error:", error);
-        let errorMessageKey = 'registrationError';
-        switch (error.code) {
-            case 'auth/email-already-in-use':
-                errorMessageKey = 'emailAlreadyInUse';
-                break;
-            case 'auth/invalid-email':
-                errorMessageKey = 'invalidEmail';
-                break;
-            case 'auth/weak-password':
-                errorMessageKey = 'weakPassword';
-                break;
-            default:
-                errorMessageKey = 'authError';
-                break;
-        }
-        await showGenericModal('error', errorMessageKey, { message: error.message });
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
-
-/**
- * Handles sending a password reset email.
- */
-const handleForgotPassword = async () => {
-    const email = emailInput.value.trim();
-    if (!email) {
-        await showGenericModal('error', 'invalidEmail');
-        return;
-    }
-
-    showLoadingIndicator(true);
-    try {
-        await sendPasswordResetEmail(auth, email);
-        await showGenericModal('info', 'passwordResetSent');
-    } catch (error) {
-        console.error("Password reset error:", error);
-        let errorMessageKey = 'passwordResetError';
-        switch (error.code) {
-            case 'auth/invalid-email':
-            case 'auth/user-not-found':
-                errorMessageKey = 'userNotFound';
-                break;
-            case 'auth/network-request-failed':
-                errorMessageKey = 'networkRequestFailed';
-                break;
-            default:
-                errorMessageKey = 'authError';
-                break;
-        }
-        await showGenericModal('error', errorMessageKey, { message: error.message });
+        loginError.textContent = getTranslatedText('loginError');
+        loginError.style.display = 'block';
     } finally {
         showLoadingIndicator(false);
     }
@@ -995,60 +869,44 @@ const handleForgotPassword = async () => {
 /**
  * Logs out the current user.
  */
-const logout = async () => {
-    try {
-        await signOut(auth);
-        // onAuthStateChanged listener will handle redirecting to login page
-    } catch (error) {
-        console.error("Logout error:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
-    }
+const logout = () => {
+    clearSession();
+    showPage(loginPage);
+    pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
+    pinInputs[0].focus(); // Focus on first PIN input
 };
 
 /**
- * Firebase Auth state change listener. This is the central point for managing user sessions.
- * It ensures `loggedInUser` is always up-to-date and the UI reflects the authentication state.
+ * Saves the current user session to localStorage.
+ * @param {object} user - The user object to save.
  */
-onAuthStateChanged(auth, async (user) => {
-    if (user) {
-        // User is signed in
-        console.log("User signed in:", user.uid, user.email);
-        // Fetch user data from Firestore to get their name and role
+const saveSession = (user) => {
+    const sessionExpiry = Date.now() + SESSION_DURATION_MS;
+    localStorage.setItem('loggedInUser', JSON.stringify(user));
+    localStorage.setItem('sessionExpiry', sessionExpiry.toString());
+};
+
+/**
+ * Clears the user session from localStorage.
+ */
+const clearSession = () => {
+    localStorage.removeItem('loggedInUser');
+    localStorage.removeItem('sessionExpiry');
+    loggedInUser = null; // Clear in-memory user data
+};
+
+/**
+ * Attempts to load a previously saved session.
+ * @returns {boolean} True if a session was successfully loaded, false otherwise.
+ */
+const loadSession = async () => {
+    const storedUser = localStorage.getItem('loggedInUser');
+    const storedExpiry = localStorage.getItem('sessionExpiry');
+
+    if (storedUser && storedExpiry && Date.now() < parseInt(storedExpiry)) {
         try {
-            const userDocRef = doc(db, 'users', user.uid);
-            const userDocSnap = await getDoc(userDocRef);
-
-            if (userDocSnap.exists()) {
-                loggedInUser = { uid: user.uid, ...userDocSnap.data() };
-                // Ensure role is set, default to 'user' if missing
-                if (!loggedInUser.role) {
-                    loggedInUser.role = 'user';
-                    await updateDoc(userDocRef, { role: 'user' }); // Update Firestore if role is missing
-                }
-                // Ensure name is set, default to email prefix if missing
-                if (!loggedInUser.name) {
-                    loggedInUser.name = user.email.split('@')[0];
-                    await updateDoc(userDocRef, { name: loggedInUser.name });
-                }
-            } else {
-                // This scenario should ideally not happen if user is created via register,
-                // but handle it for robustness (e.g., if user was deleted from Firestore directly)
-                console.warn("User document not found for authenticated user. Creating default.");
-                const userRole = (user.email === ADMIN_EMAIL) ? 'admin' : 'user';
-                loggedInUser = {
-                    uid: user.uid,
-                    email: user.email,
-                    name: user.email.split('@')[0],
-                    role: userRole,
-                    createdAt: serverTimestamp()
-                };
-                await setDoc(userDocRef, loggedInUser);
-            }
-
-            // Fetch all static data once authenticated
-            await fetchAllStaticData();
-
-            // Redirect based on role
+            loggedInUser = JSON.parse(storedUser);
+            await fetchAllStaticData(); // Fetch all static data once authenticated
             if (loggedInUser.role === 'admin') {
                 showPage(adminPanelPage);
                 await renderAdminPanel();
@@ -1056,24 +914,38 @@ onAuthStateChanged(auth, async (user) => {
                 showPage(mainDashboard);
                 await renderMainDashboard();
             }
+            return true; // Session resumed
         } catch (error) {
-            console.error("Error fetching user data from Firestore or rendering page:", error);
-            showToastMessage(getTranslatedText('errorLoadingData'), 'error');
-            await signOut(auth); // Force logout if user data cannot be loaded
+            console.error("Error parsing stored user data:", error);
+            clearSession(); // Clear corrupted session
+            return false;
         }
     } else {
-        // User is signed out
-        console.log("User signed out.");
-        loggedInUser = null;
-        showPage(loginPage);
-        emailInput.value = '';
-        passwordInput.value = '';
-        emailInput.focus();
+        clearSession(); // Clear expired or invalid session
+        return false; // No session or not resumed
+    }
+};
+
+// Warn user before leaving if there are unsaved tasks
+window.addEventListener('beforeunload', (event) => {
+    if (currentSessionTasks.length > 0 && !isSavingWork && loggedInUser && loggedInUser.role !== 'admin') {
+        event.preventDefault();
+        event.returnValue = ''; // Required for Chrome to show the prompt
+        return ''; // Required for Firefox to show the prompt
+    }
+    // Optional: Add a general warning for session expiry if the user is logged in
+    if (loggedInUser) {
+        // This will show the browser's default "Are you sure you want to leave?" prompt.
+        // Custom modals are not allowed here for security reasons.
+        event.preventDefault();
+        event.returnValue = getTranslatedText('sessionWarning', {
+            duration: `${SESSION_DURATION_MS / (60 * 60 * 1000)} ${getTranslatedText('hoursUnit')}`,
+            closedBrowserDuration: `${SESSION_CLOSED_BROWSER_MS / (60 * 60 * 1000)} ${getTranslatedText('hoursUnit')}`
+        });
+        return event.returnValue;
     }
 });
 
-
-// --- Data Fetching & Caching ---
 
 /**
  * Fetches all static data (users, accounts, task definitions) from Firestore
@@ -1111,6 +983,53 @@ const fetchAllStaticData = async () => {
     }
 };
 
+/**
+ * Ensures a default admin user exists in Firestore. If not, it creates one.
+ * This is crucial for initial setup and should be called once on app load.
+ */
+const ensureDefaultAdminUser = async () => {
+    showLoadingIndicator(true);
+    // CRITICAL CHECK: Ensure API Key is not a placeholder before proceeding
+    if (firebaseConfig.apiKey === "YOUR_API_KEY_HERE") {
+        await showGenericModal('error', 'invalidApiKeyPlaceholder');
+        showLoadingIndicator(false); // Ensure loading indicator is hidden if this error occurs
+        return; // Stop execution if API key is invalid
+    }
+
+    try {
+        const usersCollectionRef = collection(db, 'users');
+        const adminQuery = query(usersCollectionRef, where('role', '==', 'admin'), limit(1));
+        const adminSnapshot = await getDocs(adminQuery);
+
+        if (adminSnapshot.empty) {
+            console.log("No admin user found. Attempting to create default admin user in Firestore.");
+            // Directly create admin user in Firestore as Firebase Auth is not used for PIN login
+            await setDoc(doc(db, 'users', 'admin'), { // Use a fixed ID like 'admin' for the admin user
+                id: 'admin',
+                name: getTranslatedText('admin'),
+                pin: ADMIN_PIN,
+                role: 'admin',
+                createdAt: serverTimestamp()
+            });
+            showToastMessage(getTranslatedText('adminUserCreated'), 'success');
+        } else {
+            console.log("Admin user already exists.");
+            // Update the existing admin user's PIN if it's different from the constant
+            const adminDoc = adminSnapshot.docs[0];
+            if (adminDoc.data().pin !== ADMIN_PIN) {
+                await updateDoc(doc(db, 'users', adminDoc.id), { pin: ADMIN_PIN });
+                console.log("Admin PIN updated to default.");
+            }
+        }
+    } catch (error) {
+        console.error("Error checking or creating default admin user:", error);
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
+    } finally {
+        showLoadingIndicator(false);
+    }
+};
+
+
 // --- Main Dashboard Logic ---
 
 /**
@@ -1126,13 +1045,13 @@ const renderMainDashboard = async () => {
     userNameDisplay.textContent = loggedInUser.name;
     showLoadingIndicator(true);
     try {
-        const userId = loggedInUser.uid;
+        const userId = loggedInUser.id;
         const workRecordsCollectionRef = collection(db, 'workRecords');
         const recordsQueryRef = query(workRecordsCollectionRef, where('userId', '==', userId));
         const recordsSnapshot = await getDocs(recordsQueryRef);
         let totalMinutesWorked = 0;
         let totalBalance = 0;
-        
+
         const accountsMap = new Map(allAccounts.map(acc => [acc.id, acc]));
 
         const userCustomRatesCol = collection(db, 'userAccountRates');
@@ -1351,12 +1270,12 @@ const renderTaskTimingButtons = () => {
 const updateWorkSummary = () => {
     let totalCount = 0;
     let totalTime = 0;
-    
+
     const timingSummary = {};
-    
+
     currentSessionTasks.forEach(task => {
         // Use total seconds (multiplied by 1000 for precision) as the key for grouping to avoid floating point issues
-        const timingKey = Math.round(task.timing * 1000).toString(); 
+        const timingKey = Math.round(task.timing * 1000).toString();
         if (!timingSummary[timingKey]) {
             timingSummary[timingKey] = { count: 0, totalTime: 0 };
         }
@@ -1375,7 +1294,7 @@ const updateWorkSummary = () => {
         const heading = document.createElement('h3');
         heading.textContent = getTranslatedText('taskDetailsByTiming');
         detailedSummaryContainer.appendChild(heading);
-        
+
         const sortedTimings = Object.keys(timingSummary).sort((a, b) => parseFloat(a) - parseFloat(b));
 
         sortedTimings.forEach(timingKey => {
@@ -1425,7 +1344,7 @@ const saveWorkRecord = async () => {
 
     try {
         const recordData = {
-            userId: loggedInUser.uid, // Use UID from Firebase Auth
+            userId: loggedInUser.id, // Use ID from loggedInUser
             userName: loggedInUser.name,
             accountId: selectedAccount.id,
             accountName: selectedAccount.name,
@@ -1469,7 +1388,7 @@ const renderTrackWorkPage = async () => {
     trackTasksTableFoot.innerHTML = '';
     showLoadingIndicator(true);
     try {
-        const userId = loggedInUser.uid; // Use UID
+        const userId = loggedInUser.id; // Use ID
         const workRecordsCollectionRef = collection(db, 'workRecords');
         const recordsQueryRef = query(workRecordsCollectionRef, where('userId', '==', userId), orderBy('timestamp', 'desc'));
         const recordsSnapshot = await getDocs(recordsQueryRef);
@@ -1495,8 +1414,8 @@ const renderTrackWorkPage = async () => {
 
         const accountsMap = new Map(allAccounts.map(acc => [acc.id, acc]));
 
-        const userAccountRatesCol = collection(db, 'userAccountRates');
-        const userRatesQuery = query(userAccountRatesCol, where('userId', '==', userId));
+        const userCustomRatesCol = collection(db, 'userAccountRates');
+        const userRatesQuery = query(userCustomRatesCol, where('userId', '==', userId));
         const userRatesSnapshot = await getDocs(userRatesQuery);
         const userCustomRatesMap = new Map();
         userRatesSnapshot.forEach(docSnap => {
@@ -1528,7 +1447,7 @@ const renderTrackWorkPage = async () => {
             }
 
             record.recordedTimings.forEach(rt => {
-                const timingKey = Math.round(rt.timing * 1000).toString(); // Use total seconds (multiplied by 1000 for precision) as the key
+                const timingKey = Math.round(rt.timing * 1000).toString();
                 if (!processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey]) {
                     processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey] = { count: 0, totalTime: 0 };
                 }
@@ -1707,14 +1626,14 @@ const renderTrackWorkPage = async () => {
                         } else {
                             completedTasksCell.textContent = formatNumberToEnglish(0);
                         }
-                        
+
                         const totalTimeCell = row.insertCell();
                         if (currentTiming) {
                             totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(currentTiming.totalTime));
                         } else {
                             totalTimeCell.textContent = formatNumberToEnglish('00:00');
                         }
-                        
+
                         const taskSummaryTooltip = Object.keys(taskData.timings)
                             .map(timingKey => {
                                 const summary = taskData.timings[timingKey];
@@ -1725,7 +1644,7 @@ const renderTrackWorkPage = async () => {
                                 });
                             })
                             .join('\n');
-                        totalTimeCell.title = tooltipContent;
+                        totalTimeCell.title = taskSummaryTooltip;
 
 
                         if (!taskRowSpanHandled) {
@@ -1749,6 +1668,7 @@ const renderTrackWorkPage = async () => {
                             cell.classList.add('total-cell', 'daily-total-cell');
                         }
 
+                        // Update flags
                         if (!dateRowSpanHandled) {
                             dateRowSpanHandled = true;
                         }
@@ -1764,7 +1684,7 @@ const renderTrackWorkPage = async () => {
         }
 
         const footerRow = trackTasksTableFoot.insertRow();
-        
+
         let cell = footerRow.insertCell();
         cell.colSpan = 5;
         cell.textContent = getTranslatedText('grandTotal');
@@ -1857,11 +1777,11 @@ const loadAndDisplayUsers = async () => {
             cell.style.textAlign = 'center';
         } else {
             for (const user of allUsers) {
-                if (user.uid === auth.currentUser.uid && user.role === 'admin') continue; // Skip displaying current admin user
+                if (user.id === 'admin') continue; // Skip displaying admin user
 
                 const row = usersTableBody.insertRow();
                 row.insertCell().textContent = user.name;
-                row.insertCell().textContent = user.email;
+                row.insertCell().textContent = formatNumberToEnglish(user.pin); // Display PIN
                 const actionCell = row.insertCell();
                 const deleteBtn = document.createElement('button');
                 deleteBtn.textContent = getTranslatedText('deleteBtn');
@@ -1871,11 +1791,7 @@ const loadAndDisplayUsers = async () => {
                     if (confirmed) {
                         showLoadingIndicator(true);
                         try {
-                            // Delete user from Firebase Authentication
-                            // This requires a Cloud Function or Admin SDK, not directly from client-side
-                            // For this project's scope, we'll simulate by just deleting from Firestore
-                            // In a real app, you'd call a Cloud Function here.
-                            await deleteDoc(doc(db, 'users', user.uid));
+                            await deleteDoc(doc(db, 'users', user.id)); // Delete user document
                             showToastMessage(getTranslatedText('userDeletedSuccess'), 'success');
                             await fetchAllStaticData();
                             await loadAndDisplayUsers();
@@ -1899,60 +1815,39 @@ const loadAndDisplayUsers = async () => {
 };
 
 /**
- * Adds a new user via Firebase Authentication and stores their data in Firestore.
+ * Adds a new user to Firestore with a name, PIN, and role.
  */
 const addUser = async () => {
     const name = newUserNameInput.value.trim();
-    const email = newUserEmailInput.value.trim();
-    const password = newUserPasswordInput.value.trim();
+    const pin = newUserPINInput.value.trim();
 
-    if (!name || !email || !password || password.length < 6) {
-        await showGenericModal('error', 'enterUserData');
+    if (!name || pin.length !== 8 || !/^\d+$/.test(pin)) { // Validate 8-digit numeric PIN
+        await showGenericModal('error', 'enterUserNamePin');
         return;
     }
 
     showLoadingIndicator(true);
     try {
-        // Create user in Firebase Authentication
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
+        const usersCollectionRef = collection(db, 'users');
+        const existingUserQueryRef = query(usersCollectionRef, where('pin', '==', pin), limit(1));
+        const existingUserSnapshot = await getDocs(existingUserQueryRef);
+        if (!existingUserSnapshot.empty) {
+            await showGenericModal('error', 'pinAlreadyUsed');
+            showLoadingIndicator(false);
+            return;
+        }
 
-        // Store user data in Firestore
-        const userRole = (email === ADMIN_EMAIL) ? 'admin' : 'user';
-        await setDoc(doc(db, 'users', user.uid), {
-            uid: user.uid,
-            email: user.email,
-            name: name,
-            role: userRole,
-            createdAt: serverTimestamp()
-        });
-
+        await addDoc(usersCollectionRef, { name: name, pin: pin, role: 'user', createdAt: serverTimestamp() });
         showToastMessage(getTranslatedText('userAddedSuccess'), 'success');
         newUserNameInput.value = '';
-        newUserEmailInput.value = '';
-        newUserPasswordInput.value = '';
+        newUserPINInput.value = '';
         await fetchAllStaticData();
         await loadAndDisplayUsers();
         await populateUserFilter();
         await renderEmployeeRatesAndTotals();
     } catch (error) {
         console.error("Error adding user:", error);
-        let errorMessageKey = 'errorAddingUser';
-        switch (error.code) {
-            case 'auth/email-already-in-use':
-                errorMessageKey = 'emailAlreadyInUse';
-                break;
-            case 'auth/invalid-email':
-                errorMessageKey = 'invalidEmail';
-                break;
-            case 'auth/weak-password':
-                errorMessageKey = 'weakPassword';
-                break;
-            default:
-                errorMessageKey = 'authError';
-                break;
-        }
-        await showGenericModal('error', errorMessageKey, { message: error.message });
+        showToastMessage(getTranslatedText('errorAddingUser'), 'error');
     } finally {
         showLoadingIndicator(false);
     }
@@ -2062,7 +1957,7 @@ const loadAndDisplayTaskDefinitions = async () => {
             allTaskDefinitions.forEach(task => {
                 const row = tasksDefinitionTableBody.insertRow();
                 row.insertCell().textContent = task.name;
-                
+
                 const timingsCell = row.insertCell();
                 if (task.timings && task.timings.length > 0) {
                     const timingStrings = task.timings.map(t => formatNumberToEnglish(formatMinutesToMMSS(t)));
@@ -2203,7 +2098,7 @@ const populateUserFilter = async () => {
         allUsers.forEach(user => {
             if (user.role === 'admin') return; // Exclude admin
             const option = document.createElement('option');
-            option.value = user.uid; // Use UID for filter
+            option.value = user.id; // Use ID for filter
             option.textContent = user.name;
             recordFilterUser.appendChild(option);
         });
@@ -2257,7 +2152,7 @@ const loadAndDisplayWorkRecords = async (userId = null, date = null) => {
 
                 const totalTimeCell = row.insertCell();
                 totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(record.totalTime));
-                
+
                 const taskCountsByTiming = {};
                 record.recordedTimings.forEach(rt => {
                     const timingKey = Math.round(rt.timing * 1000).toString();
@@ -2277,7 +2172,7 @@ const loadAndDisplayWorkRecords = async (userId = null, date = null) => {
                 totalTimeCell.title = tooltipContent;
 
                 row.insertCell().textContent = record.timestamp ? new Date(record.timestamp.toDate()).toLocaleDateString(currentLanguage, { day: 'numeric', month: 'short' }) : 'N/A';
-                
+
                 const actionCell = row.insertCell();
                 const editBtn = document.createElement('button');
                 editBtn.textContent = getTranslatedText('editRecord');
@@ -2456,7 +2351,7 @@ const renderEmployeeRatesAndTotals = async () => {
         users.forEach(user => {
             if (user.role === 'admin') return;
 
-            const userData = employeeWorkData.get(user.uid) || { totalHours: 0, totalBalance: 0, workedAccounts: new Map() };
+            const userData = employeeWorkData.get(user.id) || { totalHours: 0, totalBalance: 0, workedAccounts: new Map() };
 
             const userWorkedAccountIds = Array.from(userData.workedAccounts.keys());
             const accountsWorkedOn = userWorkedAccountIds.map(id => accountsMap.get(id)).filter(Boolean);
@@ -2476,17 +2371,17 @@ const renderEmployeeRatesAndTotals = async () => {
                 let isFirstRowForUser = true;
                 accountsWorkedOn.forEach(account => {
                     let defaultPrice = account.defaultPricePerHour || 0;
-                    let customRateData = customRatesMap.get(user.uid)?.get(account.id);
+                    let customRateData = customRatesMap.get(user.id)?.get(account.id);
                     let customPrice = customRateData?.customPricePerHour || null;
                     let customRateDocId = customRateData?.docId || null;
 
                     const row = employeeRatesTableBody.insertRow();
-                    
+
                     const iconCell = row.insertCell();
                     const editIcon = document.createElement('span');
                     editIcon.classList.add('edit-icon-circle');
                     editIcon.innerHTML = '<i class="fas fa-pencil-alt"></i>';
-                    editIcon.addEventListener('click', () => openEditEmployeeRateModal(user.uid, user.name, account.id, account.name, defaultPrice, customPrice, customRateDocId));
+                    editIcon.addEventListener('click', () => openEditEmployeeRateModal(user.id, user.name, account.id, account.name, defaultPrice, customPrice, customRateDocId));
                     iconCell.appendChild(editIcon);
 
                     if (isFirstRowForUser) {
@@ -2498,7 +2393,7 @@ const renderEmployeeRatesAndTotals = async () => {
 
                     row.insertCell().textContent = account.name;
                     row.insertCell().textContent = formatNumberToEnglish(defaultPrice.toFixed(2));
-                    
+
                     const customPriceCell = row.insertCell();
                     customPriceCell.textContent = customPrice !== null ? formatNumberToEnglish(customPrice.toFixed(2)) : getTranslatedText('notSet');
 
@@ -2577,58 +2472,11 @@ const saveCustomRate = async () => {
         showToastMessage(getTranslatedText('rateUpdated'), 'success');
         editEmployeeRateModal.style.display = 'none';
         await renderEmployeeRatesAndTotals();
-        if (loggedInUser && loggedInUser.uid === currentEditingRate.userId) {
+        if (loggedInUser && loggedInUser.id === currentEditingRate.userId) {
             await renderMainDashboard();
         }
     } catch (error) {
         console.error("Error saving custom rate:", error);
-        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
-
-/**
- * Ensures a default admin user exists in Firestore. If not, it creates one.
- * This is crucial for initial setup and should be called once on app load.
- */
-const ensureDefaultAdminUser = async () => {
-    showLoadingIndicator(true);
-    try {
-        const usersCollectionRef = collection(db, 'users');
-        const adminQuery = query(usersCollectionRef, where('role', '==', 'admin'), limit(1));
-        const adminSnapshot = await getDocs(adminQuery);
-
-        if (adminSnapshot.empty) {
-            console.log("No admin user found. Attempting to create default admin user.");
-            // Attempt to create the admin user in Firebase Authentication
-            try {
-                const userCredential = await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, "admin123"); // Default password
-                const user = userCredential.user;
-                await setDoc(doc(db, 'users', user.uid), {
-                    uid: user.uid,
-                    email: user.email,
-                    name: getTranslatedText('admin'),
-                    role: 'admin',
-                    createdAt: serverTimestamp()
-                });
-                showToastMessage(getTranslatedText('adminUserCreated'), 'success');
-            } catch (error) {
-                if (error.code === 'auth/email-already-in-use') {
-                    console.warn("Admin email already exists in Firebase Auth, but no 'admin' role user found in Firestore. This might indicate a corrupted state. Please ensure your Firestore security rules are correctly configured.");
-                    // In this case, the user exists in Auth but their Firestore user doc might be missing or corrupted.
-                    // The onAuthStateChanged listener will attempt to fix this on next login.
-                    showToastMessage(getTranslatedText('adminUserNotFound'), 'error'); 
-                } else {
-                    console.error("Error creating default admin user:", error);
-                    showToastMessage(getTranslatedText('errorAddingUser'), 'error');
-                }
-            }
-        } else {
-            console.log("Admin user already exists.");
-        }
-    } catch (error) {
-        console.error("Error checking for default admin user:", error);
         showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     } finally {
         showLoadingIndicator(false);
@@ -2647,20 +2495,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Check and create default admin user if none exists
     await ensureDefaultAdminUser();
 
-    // Initial Firebase Auth check (handled by onAuthStateChanged)
-    // No need for explicit loadSession() here as onAuthStateChanged handles it.
+    // PIN Input logic
+    pinInputs.forEach((input, index) => {
+        input.addEventListener('input', () => {
+            // Allow only digits
+            input.value = input.value.replace(/\D/g, '');
+            if (input.value.length === 1 && index < pinInputs.length - 1) {
+                pinInputs[index + 1].focus();
+            }
+            // If all 8 digits are entered, attempt login
+            if (pinInputs.every(i => i.value.length === 1)) {
+                handleLogin();
+            }
+        });
 
-    // Login/Register/Forgot Password Buttons
-    loginBtn.addEventListener('click', handleLogin);
-    registerBtn.addEventListener('click', handleRegister);
-    forgotPasswordBtn.addEventListener('click', handleForgotPassword);
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Backspace' && input.value.length === 0 && index > 0) {
+                pinInputs[index - 1].focus();
+            }
+        });
+    });
+
+    // Login button (if present, though PIN entry triggers login automatically)
+    if (loginBtn) {
+        loginBtn.addEventListener('click', handleLogin);
+    }
+
+    // Attempt to load session on initial page load
+    const sessionResumed = await loadSession();
+    if (!sessionResumed) {
+        showPage(loginPage);
+        pinInputs[0].focus(); // Focus on the first PIN input if no session
+    }
 
     // Main Dashboard Buttons
     logoutDashboardBtn.addEventListener('click', logout);
     startWorkOptionBtn.addEventListener('click', handleStartWorkOptionClick);
     trackWorkOptionBtn.addEventListener('click', handleTrackWorkOptionClick);
 
-    // Dynamic Admin Panel button
+    // Admin Panel button
     adminPanelButton = document.getElementById('adminPanelOption');
     if (!adminPanelButton) {
         adminPanelButton = document.createElement('button');
@@ -2670,7 +2543,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         adminPanelButton.textContent = getTranslatedText('adminPanelTitle');
         mainDashboard.querySelector('.dashboard-options').appendChild(adminPanelButton);
     }
-    // Visibility of admin button is handled by onAuthStateChanged after role is determined
+    // Visibility of admin button is handled based on loggedInUser role
+    if (loggedInUser && loggedInUser.role === 'admin') {
+        adminPanelButton.style.display = 'block';
+    } else {
+        adminPanelButton.style.display = 'none';
+    }
     adminPanelButton.addEventListener('click', async () => {
         if (loggedInUser && loggedInUser.role === 'admin') {
             showPage(adminPanelPage);
@@ -2721,10 +2599,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     logoutAdminBtn.addEventListener('click', logout);
 
     // Edit Record Modal
+    if (closeEditRecordModalBtn) {
+        closeEditRecordModalBtn.addEventListener('click', () => editRecordModal.style.display = 'none');
+    }
     saveEditedRecordBtn.addEventListener('click', saveEditedRecord);
 
     // Edit Employee Rate Modal
+    if (editEmployeeRateModal) {
+        editEmployeeRateModal.querySelector('.close-button').addEventListener('click', () => editEmployeeRateModal.style.display = 'none');
+    }
     saveCustomRateBtn.addEventListener('click', saveCustomRate);
+
 
     // Connection Status Events
     window.addEventListener('online', () => {
