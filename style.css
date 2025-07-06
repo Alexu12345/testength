@@ -134,25 +134,25 @@ button.disabled {
 /* PIN Input Fields Styling */
 .pin-input-group {
     display: flex;
-    flex-direction: column; /* Stack label and inputs vertically */
-    align-items: center; /* Center align items */
+    flex-direction: column; /* Changed to column to stack label and pin-inputs */
+    align-items: center; /* Center the label and the pin-inputs container */
     margin-bottom: 25px;
     width: 100%;
 }
 
-.pin-input-group .pin-inputs {
+.pin-inputs {
     display: flex;
-    justify-content: center;
-    gap: 5px; /* Reduced gap for 8 inputs */
-    flex-wrap: wrap; /* Allow wrapping on small screens */
-    width: 100%;
-    margin-top: 15px;
+    flex-direction: row; /* Arrange inputs in a row */
+    justify-content: center; /* Center the inputs horizontally */
+    gap: 8px; /* Space between each PIN input field */
+    margin-top: 10px; /* Space between label and inputs */
+    flex-wrap: wrap; /* Allow wrapping on very small screens */
 }
 
 .pin-input-field {
-    width: 35px; /* Adjusted width for 8 inputs */
-    height: 50px; /* Adjusted height */
-    font-size: 2em; /* Slightly smaller font */
+    width: 40px; /* Smaller width for single digit */
+    height: 50px; /* Smaller height */
+    font-size: 1.8em; /* Adjusted font size for single digit */
     text-align: center;
     border: 2px solid #ced4da;
     border-radius: 8px;
@@ -160,11 +160,11 @@ button.disabled {
     color: #333;
     transition: border-color 0.3s ease, background-color 0.3s ease, color 0.3s ease;
     box-sizing: border-box;
-    -moz-appearance: textfield;
+    -moz-appearance: textfield; /* Hide arrows in Firefox */
 }
 .pin-input-field::-webkit-outer-spin-button,
 .pin-input-field::-webkit-inner-spin-button {
-    -webkit-appearance: none;
+    -webkit-appearance: none; /* Hide arrows in Chrome, Safari */
     margin: 0;
 }
 .pin-input-field:focus {
@@ -173,7 +173,8 @@ button.disabled {
     box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
 }
 
-.error-message {
+/* Error message for login */
+.login-container .error-message {
     color: #dc3545;
     font-size: 14px;
     margin-top: 10px;
@@ -568,7 +569,7 @@ button.disabled {
 /* Ensure date column does not wrap */
 .track-work-container table .date-cell {
     white-space: nowrap;
-    min-width: 90px; /* Ensure enough space for YYYY-MM-DD */
+    min-width: 90px; /* Ensure enough space for DD-MM-YYYY */
 }
 
 /* New: Border for daily record rows */
@@ -1274,18 +1275,6 @@ body.dark-mode .time-since-last-click {
         flex-basis: calc(50% - 10px); /* Two columns on small screens */
         min-width: unset;
         max-width: 180px;
-    }
-
-    /* Adjusted for 8 PIN inputs on mobile */
-    .pin-input-group .pin-inputs {
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 5px;
-    }
-    .pin-input-field {
-        width: 30px; /* Even smaller for 8 inputs on mobile */
-        height: 40px;
-        font-size: 1.5em;
     }
 
 
