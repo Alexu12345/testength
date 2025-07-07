@@ -780,6 +780,28 @@ button.disabled {
     margin-top: 0;
 }
 
+/* Pagination controls for work records table */
+.pagination-controls {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-top: 20px;
+    width: 100%;
+}
+
+.pagination-controls button {
+    width: auto;
+    flex-grow: 1;
+    max-width: 200px;
+    margin-top: 0; /* Override general button margin */
+}
+.pagination-controls button.secondary {
+    background-color: #95A5A6; /* Soft gray for secondary action */
+}
+.pagination-controls button.secondary:hover {
+    background-color: #7F8C8D;
+}
+
 
 .back-btn, #logoutAdminBtn {
     background-color: #95A5A6; /* Soft gray */
@@ -1083,7 +1105,8 @@ body.dark-mode .big-option-btn,
 body.dark-mode .save-work-btn,
 body.dark-mode .admin-action-btn,
 body.dark-mode .back-btn,
-body.dark-mode #logoutAdminBtn {
+body.dark-mode #logoutAdminBtn,
+body.dark-mode .pagination-controls button { /* Added for pagination buttons */
     background-color: #3498DB; /* Primary blue */
     color: #ECF0F1;
 }
@@ -1094,7 +1117,8 @@ body.dark-mode .big-option-btn:hover,
 body.dark-mode .save-work-btn:hover,
 body.dark-mode .admin-action-btn:hover,
 body.dark-mode .back-btn:hover,
-body.dark-mode #logoutAdminBtn:hover {
+body.dark-mode #logoutAdminBtn:hover,
+body.dark-mode .pagination-controls button:hover { /* Added for pagination buttons */
     background-color: #2980B9;
 }
 
