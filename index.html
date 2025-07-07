@@ -165,6 +165,7 @@
                         <tr>
                             <th data-key="nameColumn">الاسم</th>
                             <th data-key="pinColumn">PIN</th>
+                            <th data-key="statusColumn">الحالة</th> <!-- New column for user status -->
                             <th data-key="actionsColumn">إجراءات</th>
                         </tr>
                     </thead>
@@ -292,6 +293,10 @@
                         <!-- Work records will be loaded here -->
                     </tbody>
                 </table>
+            </div>
+            <div class="pagination-controls">
+                <button id="loadMoreRecordsBtn" data-key="loadMoreBtn">عرض 50 أخرى</button>
+                <button id="loadAllRecordsBtn" data-key="loadAllBtn">عرض الكل</button>
             </div>
         </div>
     </div>
