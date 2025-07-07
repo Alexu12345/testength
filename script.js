@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, Timestamp, serverTimestamp, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, Timestamp, serverTimestamp, addDoc, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
 // Your web app's Firebase configuration
 // This must be consistent with the one you use for your Firebase project.
@@ -734,7 +734,7 @@ const applyTranslations = () => {
         } else if (key === 'sessionWarning') { // Special handling for session warning to include dynamic duration
             const durationHours = SESSION_DURATION_MS / (60 * 60 * 1000);
             const closedBrowserDurationHours = SESSION_CLOSED_BROWSER_MS / (60 * 60 * 1000);
-            element.textContent = getTranslatedText(key, { duration: `${durationHours} ${getTranslatedText('hoursUnit')}`, closedBrowserDuration: `${closedBrowserDurationHours} ${getTranslatedText('hourUnitSingular')}` });
+            element.textContent = getTranslatedText(key, { duration: `${durationHours} ${getTranslatedText('hoursUnit')}`, closedBrowserDuration: `${closedBrowserDurationHours} ${getTranslatedText('hoursUnit')}` }); // Changed to hoursUnit for consistency
         }
         else {
             element.textContent = getTranslatedText(key);
@@ -1579,7 +1579,7 @@ const renderTrackWorkPage = async () => {
                             const displayTimingMinutes = parseFloat(currentTimingKey) / 1000;
                             timingValueCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(displayTimingMinutes));
                         } else {
-                            timingValueCell.textContent = '00:00';
+                            timingValueCell.textContent = formatNumberToEnglish('00:00'); // Default if no timings
                         }
 
                         // Column 6: Completed Tasks (per timing) - RE-ADDED
@@ -1595,7 +1595,7 @@ const renderTrackWorkPage = async () => {
                         if (currentTiming) {
                             totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(currentTiming.totalTime));
                         } else {
-                            totalTimeCell.textContent = formatNumberToEnglish('00:00');
+                            totalTimeCell.textContent = formatNumberToEnglish('00:00'); // Default if no timings
                         }
                         
                         // Add tooltip for tasks summary to the totalTimeCell
@@ -1702,7 +1702,12 @@ const renderTrackWorkPage = async () => {
 
 
     } catch (error) {
-        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
+        // More specific error message for Firestore query issues
+        if (error.code === 'failed-precondition' && error.message.includes('The query requires an index')) {
+            showToastMessage(`Error: Firestore index missing. ${error.message}`, 'error');
+        } else {
+            showToastMessage(getTranslatedText('errorLoadingRecords'), 'error');
+        }
     } finally {
         showLoadingIndicator(false);
     }
@@ -2174,29 +2179,33 @@ const loadAndDisplayWorkRecords = async (userId = null, date = null, accountId =
             recordsSnapshot.forEach(documentSnapshot => { 
                 const record = getDocData(documentSnapshot);
                 const row = workRecordsTableBody.insertRow();
-                row.insertCell().textContent = record.userName;
-                row.insertCell().textContent = record.accountName;
-                row.insertCell().textContent = record.taskDefinitionName;
+                // Use optional chaining for robustness against missing fields in old records
+                row.insertCell().textContent = record.userName || 'N/A';
+                row.insertCell().textContent = record.accountName || 'N/A';
+                row.insertCell().textContent = record.taskDefinitionName || 'N/A';
 
                 const totalTimeCell = row.insertCell(); // This is now the "إجمالي الوقت (دقيقة)" cell
-                totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(record.totalTime)); // Format total time
+                totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(record.totalTime || 0)); // Format total time
                 
                 // Construct tooltip for totalTimeCell
                 const taskCountsByTiming = {};
-                record.recordedTimings.forEach(rt => {
-                    // Use total seconds (multiplied by 1000 for precision) as the key for grouping
-                    const timingKey = Math.round(rt.timing * 1000).toString(); 
-                    taskCountsByTiming[timingKey] = (taskCountsByTiming[timingKey] || 0) + 1;
-                });
+                // Ensure record.recordedTimings exists and is an array before iterating
+                if (record.recordedTimings && Array.isArray(record.recordedTimings)) {
+                    record.recordedTimings.forEach(rt => {
+                        // Use total seconds (multiplied by 1000 for precision) as the key for grouping
+                        const timingKey = Math.round((rt.timing || 0) * 1000).toString(); 
+                        taskCountsByTiming[timingKey] = (taskCountsByTiming[timingKey] || 0) + 1;
+                    });
+                }
 
                 const tooltipContent = Object.keys(taskCountsByTiming)
                     .map(timingKey => { // Renamed to timingKey
                         const count = taskCountsByTiming[timingKey];
                         // Convert timingKey back to decimal minutes for display in tooltip
-                        const formattedTime = formatMinutesToMMSS(parseFloat(timingKey) / 1000);
+                        const displayTimingMinutes = parseFloat(timingKey) / 1000;
                         return getTranslatedText('tasksSummaryTooltip', {
                             count: formatNumberToEnglish(count),
-                            time: formatNumberToEnglish(formattedTime)
+                            time: formatNumberToEnglish(formatMinutesToMMSS(displayTimingMinutes))
                         });
                     })
                     .join('\n'); // Join with newline for multi-line tooltip
@@ -2216,7 +2225,7 @@ const loadAndDisplayWorkRecords = async (userId = null, date = null, accountId =
                 deleteBtn.textContent = getTranslatedText('deleteBtn');
                 deleteBtn.classList.add('admin-action-btntp', 'delete'); // Use admin-action-btntp for consistency
                 deleteBtn.addEventListener('click', () => {
-                    showConfirmationModal(getTranslatedText('confirmDeleteRecord', { name: record.userName }), async () => {
+                    showConfirmationModal(getTranslatedText('confirmDeleteRecord', { name: record.userName || 'N/A' }), async () => {
                         showLoadingIndicator(true);
                         deleteBtn.disabled = true;
                         deleteBtn.textContent = getTranslatedText('deleting');
@@ -2240,7 +2249,12 @@ const loadAndDisplayWorkRecords = async (userId = null, date = null, accountId =
             });
         }
     } catch (error) {
-        showToastMessage(getTranslatedText('errorLoadingRecords'), 'error');
+        // More specific error message for Firestore query issues
+        if (error.code === 'failed-precondition' && error.message.includes('The query requires an index')) {
+            showToastMessage(`Error: Firestore index missing. ${error.message}`, 'error');
+        } else {
+            showToastMessage(`${getTranslatedText('errorLoadingRecords')}: ${error.message}`, 'error'); // Display actual error message for debugging
+        }
     } finally {
         showLoadingIndicator(false);
     }
@@ -2278,8 +2292,8 @@ const openEditRecordModal = (record) => {
     });
     editTaskTypeSelect.value = record.taskDefinitionId;
 
-    editTotalTasksCount.value = formatNumberToEnglish(record.totalTasksCount);
-    editTotalTime.value = formatNumberToEnglish(record.totalTime.toFixed(2)); // Keep as decimal for input
+    editTotalTasksCount.value = formatNumberToEnglish(record.totalTasksCount || 0);
+    editTotalTime.value = formatNumberToEnglish((record.totalTime || 0).toFixed(2)); // Keep as decimal for input
 
     // Populate date and time inputs
     if (record.timestamp) {
@@ -2395,15 +2409,15 @@ const renderEmployeeRatesAndTotals = async () => {
                 employeeWorkData.set(record.userId, { totalHours: 0, totalBalance: 0, workedAccounts: new Map() });
             }
             const userData = employeeWorkData.get(record.userId);
-            userData.totalHours += record.totalTime / 60; // Convert to hours
-            userData.workedAccounts.set(record.accountId, (userData.workedAccounts.get(record.accountId) || 0) + record.totalTime); // Store total minutes per account
+            userData.totalHours += (record.totalTime || 0) / 60; // Convert to hours
+            userData.workedAccounts.set(record.accountId, (userData.workedAccounts.get(record.accountId) || 0) + (record.totalTime || 0)); // Store total minutes per account
 
             // Calculate balance for this record using applicable price
             let pricePerHour = accountsMap.get(record.accountId)?.defaultPricePerHour || 0;
             if (customRatesMap.has(record.userId) && customRatesMap.get(record.userId).has(record.accountId)) {
                 pricePerHour = customRatesMap.get(record.userId).get(record.accountId).customPricePerHour;
             }
-            userData.totalBalance += (record.totalTime / 60) * pricePerHour;
+            userData.totalBalance += ((record.totalTime || 0) / 60) * pricePerHour;
         });
 
         users.forEach(user => {
