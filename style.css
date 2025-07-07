@@ -1039,7 +1039,7 @@ button.disabled {
 /* Dark Mode Styles */
 body.dark-mode {
     background-color: #1A242F; /* Dark background */
-    color: #ECF0F1; /* Light text */
+    color: #F8F9FA; /* Brighter general text color for better contrast */
 }
 
 body.dark-mode .page,
@@ -1047,20 +1047,11 @@ body.dark-mode .modal-content,
 body.dark-mode .popup,
 body.dark-mode .admin-section,
 body.dark-mode .work-summary-section,
-body.dark-mode .task-timing-buttons-section,
-body.dark-mode .track-work-container table,
-body.dark-mode .track-work-container table tbody tr:nth-child(even),
-body.dark-mode .track-work-container table tbody tr:hover,
-body.dark-mode .lang-btn,
-body.dark-mode .input-group input,
-body.dark-mode .input-group select,
-body.dark-mode .modal-content input[type="number"],
-body.dark-mode .modal-content input[type="date"],
-body.dark-mode .modal-content input[type="time"],
-body.dark-mode .modal-content select {
+body.dark-mode .task-timing-buttons-section {
     background-color: #2C3E50; /* Darker blue/gray for elements */
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     border-color: #4A6070; /* Darker border */
+    color: #F8F9FA; /* Ensure general text within these containers is light */
 }
 
 body.dark-mode h1,
@@ -1071,17 +1062,18 @@ body.dark-mode h3 {
 }
 
 body.dark-mode .input-group label,
-body.dark-mode .modal-content label,
-body.dark-mode .work-summary-section td,
-body.dark-mode #detailedSummaryContainer p {
-    color: #BDC3C7; /* Light gray for labels/text */
+body.dark-mode .modal-content label {
+    color: #E0E0E0; /* Slightly brighter for labels */
 }
 
-body.dark-mode input,
-body.dark-mode select,
-body.dark-mode textarea {
+body.dark-mode input[type="text"],
+body.dark-mode input[type="password"],
+body.dark-mode input[type="number"],
+body.dark-mode input[type="date"],
+body.dark-mode input[type="time"],
+body.dark-mode select {
     background-color: #34495E; /* Even darker blue/gray for inputs */
-    color: #ECF0F1;
+    color: #F8F9FA; /* Ensure input text is bright */
     border-color: #5D7A90;
 }
 
@@ -1129,11 +1121,9 @@ body.dark-mode .total-hours-box {
     border: 1px solid #27AE60;
 }
 
-body.dark-mode .total-hours-box p {
-    color: #ECF0F1;
-}
+body.dark-mode .total-hours-box p,
 body.dark-mode .total-hours-box p span {
-    color: #ECF0F1;
+    color: #F8F9FA; /* Ensure text inside total boxes is bright */
 }
 
 
@@ -1143,13 +1133,13 @@ body.dark-mode table {
 
 body.dark-mode table th {
     background-color: #34495E; /* Darker blue/gray for table headers */
-    color: #76D7C4; /* Soft teal */
+    color: #76D7C4 !important; /* Soft teal, ensure it's applied */
     border-color: #5D7A90;
 }
 
 body.dark-mode table td {
     background-color: #2C3E50 !important; /* Darker blue/gray for table cells */
-    color: #ECF0F1 !important;
+    color: #F8F9FA !important; /* Brighter text color for table cells */
     border-color: #4A6070 !important;
 }
 
@@ -1232,7 +1222,7 @@ body.dark-mode .edit-icon-circle:hover {
 
 body.dark-mode .admin-action-btntp {
     background-color: #95A5A6 !important; /* Soft gray */
-    color: #2C3E50 !important;
+    color: #F8F9FA !important; /* Ensure text is light */
 }
 body.dark-mode .admin-action-btntp:hover {
     background-color: #7F8C8D !important;
