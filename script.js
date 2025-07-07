@@ -1,939 +1,1088 @@
-// استيراد وظائف Firebase SDK الضرورية
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, Timestamp, serverTimestamp, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, Timestamp, serverTimestamp, addDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-// تهيئة Firebase App و Firestore Database
-// يتم توفير firebaseConfig و __app_id و __initial_auth_token من بيئة Canvas
-// يجب استخدام هذه المتغيرات العامة لضمان عمل التطبيق في بيئة Canvas
-
-// تحقق من وجود __app_id و __firebase_config قبل الاستخدام
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-let firebaseConfig = {};
-try {
-    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-        firebaseConfig = JSON.parse(__firebase_config);
-    } else {
-        console.warn("تحذير: متغير __firebase_config غير معرف أو فارغ.");
-    }
-} catch (e) {
-    console.error("خطأ في تحليل __firebase_config:", e);
-    // يمكنك عرض رسالة خطأ للمستخدم هنا إذا أردت
-    // showToastMessage("خطأ في تهيئة التطبيق. يرجى الاتصال بالدعم.", "error");
-}
-
-
-// تحقق من أن firebaseConfig يحتوي على projectId
-if (!firebaseConfig || !firebaseConfig.projectId) {
-    console.error("خطأ في تهيئة Firebase: 'projectId' غير متوفر في التكوين.");
-    // لا تحاول تهيئة Firebase إذا كان التكوين غير صالح
-    // showToastMessage("خطأ في تهيئة التطبيق. يرجى الاتصال بالدعم.", "error");
-    // يمكن هنا إيقاف تنفيذ السكريبت أو عرض رسالة خطأ كبيرة للمستخدم
-}
-
-let app;
-let db;
-let auth;
-let userId = null; // سيتم تعيينه بعد المصادقة
-let isAuthReady = false; // لتتبع ما إذا كانت المصادقة جاهزة
-
-// حاول تهيئة Firebase فقط إذا كان التكوين صالحًا
-if (firebaseConfig && firebaseConfig.projectId) {
-    try {
-        app = initializeApp(firebaseConfig);
-        db = getFirestore(app);
-        auth = getAuth(app);
-    } catch (e) {
-        console.error("خطأ أثناء تهيئة Firebase SDK:", e);
-        // showToastMessage("خطأ فادح في تهيئة Firebase. يرجى التحقق من وحدة التحكم.", "error");
-    }
-} else {
-    console.error("لا يمكن تهيئة Firebase بسبب تكوين غير صالح.");
-}
-
-
-// الحالة العامة للتطبيق
-let loggedInUser = null; // يخزن بيانات المستخدم الحالي { id, name, role }
-let allAccounts = []; // يخزن جميع تعريفات الحسابات من Firestore
-let allTaskDefinitions = []; // يخزن جميع تعريفات المهام من Firestore
-let allUsers = []; // يخزن جميع المستخدمين من Firestore (للمدير)
-let allWorkRecords = []; // يخزن جميع سجلات العمل (للمدير)
-let allEmployeeRates = []; // يخزن الأسعار المخصصة للموظفين
-
-let selectedAccount = null; // الحساب المحدد لجلسة العمل الحالية
-let selectedTaskDefinition = null; // تعريف المهمة المحدد لجلسة العمل الحالية
-let currentSessionTasks = []; // مصفوفة لتتبع المهام المضافة في الجلسة الحالية قبل حفظها
-let isSavingWork = false; // علامة لمنع تحذير beforeunload أثناء حفظ العمل
-let lastClickTime = 0; // لتتبع الوقت بين النقرات على أزرار التوقيت
-let taskChart = null; // مثيل Chart.js لصفحة تتبع العمل
-
-// كائن الترجمات
-const translations = {
-    ar: {
-        loginTitle: "تسجيل الدخول",
-        pinPlaceholder: "أدخل رمز PIN",
-        loginBtn: "دخول",
-        hello: "مرحباً،",
-        totalHoursTitle: "إجمالي ساعات العمل:",
-        hoursUnit: "ساعة",
-        totalBalanceTitle: "إجمالي الرصيد:",
-        currencyUnit: "جنيه",
-        startWorkOption: "بدء العمل",
-        trackWorkOption: "متابعة العمل",
-        adminPanelOption: "لوحة تحكم المدير",
-        logoutAdmin: "تسجيل الخروج",
-        chooseTask: "اختر المهمة",
-        accountName: "اسم الحساب:",
-        taskType: "نوع المهمة:",
-        confirmBtn: "تأكيد",
-        backToDashboard: "رجوع للرئيسية",
-        taskCount: "عدد المهام المنجزة:",
-        totalTimeRecorded: "إجمالي الوقت المسجل:",
-        saveWorkBtn: "حفظ العمل",
-        trackWorkTitle: "متابعة العمل",
-        serialColumn: "المسلسل",
-        dateColumn: "التاريخ",
-        timeColumn: "الوقت",
-        accountNameColumn: "اسم الحساب",
-        taskColumn: "المهمة",
-        timingValueColumn: "التوقيت (دقيقة)",
-        completedTasksColumn: "عدد المهام المنجزة",
-        totalTimeMinutesColumn: "إجمالي الوقت (دقيقة)",
-        totalForTaskColumn: "إجمالي المهمة",
-        totalForAccountColumn: "إجمالي الحساب",
-        dailyTotalTimeColumn: "إجمالي اليوم",
-        grandTotal: "الإجمالي الكلي",
-        adminPanelTitle: "لوحة تحكم المدير",
-        manageUsers: "إدارة المستخدمين",
-        newUserName: "اسم المستخدم الجديد",
-        newUserPIN: "رمز PIN للمستخدم (8 أرقام)",
-        addUserBtn: "إضافة مستخدم",
-        currentUsers: "المستخدمون الحاليون:",
-        nameColumn: "الاسم",
-        pinColumn: "PIN",
-        actionsColumn: "إجراءات",
-        manageAccounts: "إدارة الحسابات",
-        newAccountName: "اسم الحساب الجديد",
-        defaultPricePlaceholder: "السعر الافتراضي للساعة (جنيه)",
-        addAccountBtn: "إضافة حساب",
-        currentAccounts: "الحسابات الحالية:",
-        defaultPriceColumn: "السعر الافتراضي/ساعة",
-        manageTasks: "إدارة المهام والتوقيتات",
-        newTaskName: "اسم المهمة الجديدة",
-        minutesPlaceholder: "دقائق",
-        secondsPlaceholder: "ثواني",
-        addTimingField: "إضافة حقل توقيت",
-        addTaskBtn: "إضافة مهمة جديدة",
-        currentTasks: "المهام الحالية:",
-        taskNameColumn: "المهمة",
-        timingsColumn: "التوقيتات (دقائق:ثواني)",
-        manageWorkRecords: "إدارة سجلات العمل",
-        filterBtn: "تصفية",
-        userColumn: "المستخدم",
-        editRecord: "تعديل سجل العمل",
-        taskCountEdit: "عدد المهام:",
-        totalTimeEdit: "إجمالي الوقت (دقيقة):",
-        saveChangesBtn: "حفظ التعديلات",
-        internetRestored: "تم استعادة الاتصال بالإنترنت.",
-        internetLost: "فقد الاتصال بالإنترنت. قد لا يتم حفظ التغييرات.",
-        error: "خطأ",
-        close: "إغلاق",
-        invalidPIN: "رمز PIN غير صالح.",
-        userNotFound: "المستخدم غير موجود.",
-        fillAllFields: "الرجاء ملء جميع الحقول المطلوبة.",
-        recordAdded: "تمت إضافة السجل بنجاح!",
-        recordUpdated: "تم تحديث السجل بنجاح!",
-        recordDeleted: "تم حذف السجل بنجاح!",
-        userAdded: "تم إضافة المستخدم بنجاح!",
-        userDeleted: "تم حذف المستخدم بنجاح!",
-        accountAdded: "تم إضافة الحساب بنجاح!",
-        accountDeleted: "تم حذف الحساب بنجاح!",
-        taskAdded: "تم إضافة المهمة بنجاح!",
-        taskDeleted: "تم حذف المهمة بنجاح!",
-        undo: "تراجع",
-        lastClickTime: "النقرة الأخيرة: ",
-        manageEmployeeRates: "إدارة أسعار الموظفين والإجماليات",
-        employeeNameLabel: "الموظف:",
-        accountNameLabel: "الحساب:",
-        defaultPriceLabel: "السعر الافتراضي:",
-        customPriceInputLabel: "السعر المخصص (جنيه):",
-        editCustomRateTitle: "تعديل السعر المخصص",
-        customRateSaved: "تم حفظ السعر المخصص بنجاح!",
-        employeeNameColumn: "الموظف",
-        customPriceColumn: "السعر المخصص/ساعة",
-        accountTotalTimeColumnShort: "وقت الحساب",
-        accountBalanceColumn: "رصيد الحساب",
-        employeeTotalHoursColumn: "إجمالي الساعات",
-        employeeTotalBalanceColumn: "إجمالي الرصيد المستحق",
-        noDataAvailable: "لا توجد بيانات متاحة للعرض.",
-        confirmDeleteRecord: "هل أنت متأكد أنك تريد حذف هذا السجل؟",
-        confirmDeleteUser: "هل أنت متأكد أنك تريد حذف هذا المستخدم؟ سيتم حذف جميع سجلات عمله أيضًا.",
-        confirmDeleteAccount: "هل أنت متأكد أنك تريد حذف هذا الحساب؟",
-        confirmDeleteTask: "هل أنت متأكد أنك تريد حذف هذه المهمة؟",
-        detailedSummary: "ملخص تفصيلي",
-        noTasksRecorded: "لم يتم تسجيل أي مهام بعد.",
-        tasks: "مهام",
-        noTasksToSave: "لا توجد مهام لحفظها.",
-        dateAndTimeColumn: "التاريخ والوقت",
-        allUsers: "جميع المستخدمين",
-        unsavedTasksWarning: "لديك مهام غير محفوظة. هل أنت متأكد أنك تريد العودة إلى لوحة التحكم الرئيسية؟ سيتم فقدان المهام غير المحفوظة."
-    },
-    en: {
-        loginTitle: "Login",
-        pinPlaceholder: "Enter PIN",
-        loginBtn: "Login",
-        hello: "Hello,",
-        totalHoursTitle: "Total Hours:",
-        hoursUnit: "hours",
-        totalBalanceTitle: "Total Balance:",
-        currencyUnit: "EGP",
-        startWorkOption: "Start Work",
-        trackWorkOption: "Track Work",
-        adminPanelOption: "Admin Panel",
-        logoutAdmin: "Logout",
-        chooseTask: "Choose Task",
-        accountName: "Account Name:",
-        taskType: "Task Type:",
-        confirmBtn: "Confirm",
-        backToDashboard: "Back to Dashboard",
-        taskCount: "Tasks Completed:",
-        totalTimeRecorded: "Total Time Recorded:",
-        saveWorkBtn: "Save Work",
-        trackWorkTitle: "Work Tracking",
-        serialColumn: "Serial",
-        dateColumn: "Date",
-        timeColumn: "Time",
-        accountNameColumn: "Account Name",
-        taskColumn: "Task",
-        timingValueColumn: "Timing (min)",
-        completedTasksColumn: "Tasks Completed",
-        totalTimeMinutesColumn: "Total Time (min)",
-        totalForTaskColumn: "Task Total",
-        totalForAccountColumn: "Account Total",
-        dailyTotalTimeColumn: "Daily Total",
-        grandTotal: "Grand Total",
-        adminPanelTitle: "Admin Panel",
-        manageUsers: "Manage Users",
-        newUserName: "New User Name",
-        newUserPIN: "User PIN (8 digits)",
-        addUserBtn: "Add User",
-        currentUsers: "Current Users:",
-        nameColumn: "Name",
-        pinColumn: "PIN",
-        actionsColumn: "Actions",
-        manageAccounts: "Manage Accounts",
-        newAccountName: "New Account Name",
-        defaultPricePlaceholder: "Default Price per Hour (EGP)",
-        addAccountBtn: "Add Account",
-        currentAccounts: "Current Accounts:",
-        defaultPriceColumn: "Default Price/Hour",
-        manageTasks: "Manage Tasks & Timings",
-        newTaskName: "New Task Name",
-        minutesPlaceholder: "Minutes",
-        secondsPlaceholder: "Seconds",
-        addTimingField: "Add Timing Field",
-        addTaskBtn: "Add New Task",
-        currentTasks: "Current Tasks:",
-        taskNameColumn: "Task",
-        timingsColumn: "Timings (min:sec)",
-        manageWorkRecords: "Manage Work Records",
-        filterBtn: "Filter",
-        userColumn: "User",
-        editRecord: "Edit Work Record",
-        taskCountEdit: "Task Count:",
-        totalTimeEdit: "Total Time (minutes):",
-        saveChangesBtn: "Save Changes",
-        internetRestored: "Internet connection restored.",
-        internetLost: "Internet connection lost. Changes may not be saved.",
-        error: "Error",
-        close: "Close",
-        invalidPIN: "Invalid PIN.",
-        userNotFound: "User not found.",
-        fillAllFields: "Please fill in all required fields.",
-        recordAdded: "Record added successfully!",
-        recordUpdated: "Record updated successfully!",
-        recordDeleted: "Record deleted successfully!",
-        userAdded: "User added successfully!",
-        userDeleted: "User deleted successfully!",
-        accountAdded: "Account added successfully!",
-        accountDeleted: "Account deleted successfully!",
-        taskAdded: "Task added successfully!",
-        taskDeleted: "Task deleted successfully!",
-        undo: "Undo",
-        lastClickTime: "Last click: ",
-        manageEmployeeRates: "Manage Employee Rates & Totals",
-        employeeNameLabel: "Employee:",
-        accountNameLabel: "Account:",
-        defaultPriceLabel: "Default Price:",
-        customPriceInputLabel: "Custom Price (EGP):",
-        editCustomRateTitle: "Edit Custom Rate",
-        customRateSaved: "Custom rate saved successfully!",
-        employeeNameColumn: "Employee",
-        customPriceColumn: "Custom Price/Hour",
-        accountTotalTimeColumnShort: "Acct. Time",
-        accountBalanceColumn: "Acct. Balance",
-        employeeTotalHoursColumn: "Total Hours",
-        employeeTotalBalanceColumn: "Total Balance Due",
-        noDataAvailable: "No data available to display.",
-        confirmDeleteRecord: "Are you sure you want to delete this record?",
-        confirmDeleteUser: "Are you sure you want to delete this user? All their work records will also be deleted.",
-        confirmDeleteAccount: "Are you sure you want to delete this account?",
-        confirmDeleteTask: "Are you sure you want to delete this task?",
-        detailedSummary: "Detailed Summary",
-        noTasksRecorded: "No tasks recorded yet.",
-        tasks: "tasks",
-        noTasksToSave: "No tasks to save.",
-        dateAndTimeColumn: "Date and Time",
-        allUsers: "All Users",
-        unsavedTasksWarning: "You have unsaved tasks. Are you sure you want to go back to the dashboard? Unsaved tasks will be lost."
-    }
+// Your web app's Firebase configuration
+// This must be consistent with the one you use for your Firebase project.
+const firebaseConfig = {
+    apiKey: "AIzaSyBu_MfB_JXvzBFaKY-Yxze1JotejU--4as",
+    authDomain: "worktrackerapp-a32af.firebaseapp.com",
+    projectId: "worktrackerapp-a32af",
+    storageBucket: "worktrackerapp-a32af.firebasestorage.app",
+    messagingSenderId: "246595598451",
+    appId: "1:246595598451:web:c6842f1618dffe765a5206"
 };
 
-let currentLanguage = localStorage.getItem('language') || 'ar'; // اللغة الافتراضية
+// Initialize Firebase App and Firestore Database
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
-// 1. عناصر DOM
-// حاويات الصفحات
+// Global state
+let loggedInUser = null; // Stores current user data { id, name, role }
+let allAccounts = []; // Stores all account definitions from Firestore
+let allTaskDefinitions = []; // Stores all task definitions from Firestore
+let allUsers = []; // Stores all user definitions from Firestore (for admin panel and filters)
+let selectedAccount = null; // The account selected for the current work session
+let selectedTaskDefinition = null; // The task definition selected for the current work session
+let currentSessionTasks = []; // Tasks added in the current unsaved session
+let isSavingWork = false; // Flag to prevent beforeunload warning during save
+let lastClickTime = null; // For "time between clicks" feature
+
+// Constants
+const SESSION_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours in milliseconds
+const SESSION_CLOSED_BROWSER_MS = 1 * 60 * 60 * 1000; // 1 hour if browser closed
+
+// DOM Elements
 const loginPage = document.getElementById('loginPage');
 const mainDashboard = document.getElementById('mainDashboard');
 const startWorkPage = document.getElementById('startWorkPage');
 const trackWorkPage = document.getElementById('trackWorkPage');
 const adminPanelPage = document.getElementById('adminPanelPage');
 
-// عناصر صفحة تسجيل الدخول
-const pinInputFields = document.querySelectorAll('.pin-input-field');
-const loginBtn = document.getElementById('loginBtn'); // هذا الزر لم يعد موجودًا في HTML الجديد، سيتم استخدام Enter
-const loginErrorModal = document.getElementById('loginErrorModal');
-const loginErrorModalTitle = document.getElementById('loginErrorModalTitle');
-const loginErrorModalMessage = document.getElementById('loginErrorModalMessage');
-const closeLoginErrorModalBtn = document.getElementById('closeLoginErrorModal');
-const loginErrorModalCloseBtn = document.getElementById('loginErrorModalCloseBtn');
+// Login Page Elements
+const pinInputs = [];
+for (let i = 1; i <= 8; i++) {
+    pinInputs.push(document.getElementById(`pinInput${i}`));
+}
 
-// عناصر لوحة التحكم الرئيسية
+// Main Dashboard Elements
 const userNameDisplay = document.getElementById('userNameDisplay');
 const totalHoursDisplay = document.getElementById('totalHoursDisplay');
-const totalBalanceDisplay = document.getElementById('totalBalanceDisplay');
+const totalBalanceDisplay = document.getElementById('totalBalanceDisplay'); // New: Total Balance Display
 const startWorkOptionBtn = document.getElementById('startWorkOption');
 const trackWorkOptionBtn = document.getElementById('trackWorkOption');
-let adminPanelOptionBtn = null; // سيتم إنشاؤه ديناميكياً
-const logoutDashboardBtn = document.getElementById('logoutDashboardBtn');
+const logoutDashboardBtn = document.getElementById('logoutDashboardBtn'); // Logout from main dashboard
+let adminPanelButton = null; // Will be created dynamically
 
-// عناصر صفحة بدء العمل
+// Track Work Page Elements (now includes chart)
+const taskChartCanvas = document.getElementById('taskChart'); // Canvas for chart (now on track work page)
+let taskChart = null; // Chart.js instance for track work page
+const trackTasksTableBody = document.getElementById('trackTasksTableBody');
+const trackTasksTableFoot = document.getElementById('trackTasksTableFoot'); // New: Table footer for totals
+const backToDashboardFromTrackBtn = document.getElementById('backToDashboardFromTrack');
+
+// Start Work Page Elements
 const taskSelectionPopup = document.getElementById('taskSelectionPopup');
 const accountSelect = document.getElementById('accountSelect');
 const taskTypeSelect = document.getElementById('taskTypeSelect');
 const confirmSelectionBtn = document.getElementById('confirmSelectionBtn');
-const backToDashboardFromPopupBtn = document.getElementById('backToDashboardFromPopup');
-const taskDetailsContainer = document.getElementById('taskDetailsContainer');
-const completedTasksCountDisplay = document.getElementById('completedTasksCount');
-const recordedTotalTimeDisplay = document.getElementById('recordedTotalTime');
-const detailedSummaryContainer = document.getElementById('detailedSummaryContainer');
-const taskTimingButtonsContainer = document.getElementById('taskTimingButtonsContainer');
+const backToDashboardFromPopup = document.getElementById('backToDashboardFromPopup'); // Back button in popup
+const completedTasksCount = document.getElementById('completedTasksCount');
+const recordedTotalTime = document.getElementById('recordedTotalTime');
+const detailedSummaryContainer = document.getElementById('detailedSummaryContainer'); // For detailed timing summary
+const taskTimingButtonsContainer = document.getElementById('taskTimingButtonsContainer'); // This is the div with class 'task-timing-buttons-section'
 const saveWorkBtn = document.getElementById('saveWorkBtn');
-const backToDashboardFromStartWorkBtn = document.getElementById('backToDashboardFromStartWork');
+const backToDashboardFromStartWork = document.getElementById('backToDashboardFromStartWork'); // Back button from start work page
+const taskDetailsContainer = document.getElementById('taskDetailsContainer'); // Reference to the container that holds summary and timing buttons
 
-// عناصر صفحة متابعة العمل
-const taskChartCanvas = document.getElementById('taskChart');
-const trackTasksTableBody = document.getElementById('trackTasksTableBody');
-const trackTasksTableFoot = document.getElementById('trackTasksTableFoot');
-const backToDashboardFromTrackBtn = document.getElementById('backToDashboardFromTrack');
-
-// عناصر لوحة تحكم المدير
+// Admin Panel Elements - Users
 const newUserNameInput = document.getElementById('newUserNameInput');
 const newUserPINInput = document.getElementById('newUserPINInput');
 const addUserBtn = document.getElementById('addUserBtn');
 const usersTableBody = document.getElementById('usersTableBody');
+const newUserNameInputError = document.getElementById('newUserNameInputError');
+const newUserPINInputError = document.getElementById('newUserPINInputError');
+
+
+// Admin Panel Elements - Accounts
 const newAccountNameInput = document.getElementById('newAccountNameInput');
-const newAccountPriceInput = document.getElementById('newAccountPriceInput');
+const newAccountPriceInput = document.getElementById('newAccountPriceInput'); // New: Default price input
 const addAccountBtn = document.getElementById('addAccountBtn');
 const accountsTableBody = document.getElementById('accountsTableBody');
+const newAccountNameInputError = document.getElementById('newAccountNameInputError');
+const newAccountPriceInputError = document.getElementById('newAccountPriceInputError');
+
+
+// Admin Panel Elements - Task Definitions
 const newTaskNameInput = document.getElementById('newTaskNameInput');
 const newTimingsContainer = document.getElementById('newTimingsContainer');
 const addTimingFieldBtn = document.getElementById('addTimingFieldBtn');
 const addTaskDefinitionBtn = document.getElementById('addTaskDefinitionBtn');
 const tasksDefinitionTableBody = document.getElementById('tasksDefinitionTableBody');
+const newTaskNameInputError = document.getElementById('newTaskNameInputError');
+const newTimingsInputError = document.getElementById('newTimingsInputError');
+
+
+// Admin Panel Elements - Work Records
 const recordFilterDate = document.getElementById('recordFilterDate');
 const recordFilterUser = document.getElementById('recordFilterUser');
+const recordFilterAccount = document.getElementById('recordFilterAccount'); // New filter
+const recordFilterTask = document.getElementById('recordFilterTask'); // New filter
 const filterRecordsBtn = document.getElementById('filterRecordsBtn');
 const workRecordsTableBody = document.getElementById('workRecordsTableBody');
-const logoutAdminBtn = document.getElementById('logoutAdminBtn');
-const employeeRatesTableBody = document.getElementById('employeeRatesTableBody');
 
-// عناصر نافذة تعديل السجل المنبثقة
+// Edit Record Modal Elements
 const editRecordModal = document.getElementById('editRecordModal');
-const closeEditRecordModalBtn = editRecordModal ? editRecordModal.querySelector('.close-button') : null;
+const closeEditRecordModalBtn = editRecordModal.querySelector('.close-button');
 const editAccountSelect = document.getElementById('editAccountSelect');
 const editTaskTypeSelect = document.getElementById('editTaskTypeSelect');
 const editTotalTasksCount = document.getElementById('editTotalTasksCount');
 const editTotalTime = document.getElementById('editTotalTime');
-const editRecordDate = document.getElementById('editRecordDate');
-const editRecordTime = document.getElementById('editRecordTime');
+const editRecordDate = document.getElementById('editRecordDate'); // New: Date input for editing
+const editRecordTime = document.getElementById('editRecordTime'); // New: Time input for editing
 const saveEditedRecordBtn = document.getElementById('saveEditedRecordBtn');
-let currentEditingRecordId = null; // لتخزين معرف السجل الذي يتم تعديله
+let currentEditingRecordId = null; // Stores the ID of the record being edited
+const editAccountSelectError = document.getElementById('editAccountSelectError');
+const editTaskTypeSelectError = document.getElementById('editTaskTypeSelectError');
+const editTotalTasksCountError = document.getElementById('editTotalTasksCountError');
+const editTotalTimeError = document.getElementById('editTotalTimeError');
+const editRecordDateError = document.getElementById('editRecordDateError');
+const editRecordTimeError = document.getElementById('editRecordTimeError');
 
-// عناصر نافذة تعديل السعر المخصص للموظف المنبثقة
+
+// New Admin Panel Elements for Employee Rates
+const employeeRatesTableBody = document.getElementById('employeeRatesTableBody');
 const editEmployeeRateModal = document.getElementById('editEmployeeRateModal');
 const modalEmployeeName = document.getElementById('modalEmployeeName');
 const modalAccountName = document.getElementById('modalAccountName');
 const modalDefaultPrice = document.getElementById('modalDefaultPrice');
 const modalCustomPriceInput = document.getElementById('modalCustomPriceInput');
 const saveCustomRateBtn = document.getElementById('saveCustomRateBtn');
-let currentEditingRate = null; // لتخزين بيانات السعر المخصص الذي يتم تعديله
+let currentEditingRate = { userId: null, accountId: null, docId: null };
+const modalCustomPriceInputError = document.getElementById('modalCustomPriceInputError');
 
-// عناصر مؤشر التحميل ورسائل التوست
-const loadingIndicator = document.getElementById('loadingIndicator');
+
+// Common Admin Elements
+const logoutAdminBtn = document.getElementById('logoutAdminBtn');
+
+// Toast Message Elements
 const toastMessage = document.getElementById('toastMessage');
 
-// عناصر مبدل اللغة ووضع الإضاءة
+// Loading Indicator Elements
+const loadingIndicator = document.getElementById('loadingIndicator');
+
+// Language Switcher Elements
 const langArBtn = document.getElementById('langArBtn');
 const langEnBtn = document.getElementById('langEnBtn');
+
+// Dark Mode Toggle Elements
 const darkModeToggle = document.getElementById('darkModeToggle');
+const darkModeIcon = darkModeToggle ? darkModeToggle.querySelector('i') : null;
+
+// New Login Error Modal Elements
+const loginErrorModal = document.getElementById('loginErrorModal');
+const loginErrorModalTitle = document.getElementById('loginErrorModalTitle');
+const loginErrorModalMessage = document.getElementById('loginErrorModalMessage');
+const closeLoginErrorModalBtn = document.getElementById('closeLoginErrorModal');
+const loginErrorModalCloseBtn = document.getElementById('loginErrorModalCloseBtn');
+
+// New Custom Confirmation Modal Elements
+const confirmationModal = document.getElementById('confirmationModal');
+const confirmationModalTitle = document.getElementById('confirmationModalTitle');
+const confirmationModalMessage = document.getElementById('confirmationModalMessage');
+const confirmModalBtn = document.getElementById('confirmModalBtn');
+const cancelModalBtn = document.getElementById('cancelModalBtn');
+let confirmCallback = null; // Stores the callback for confirmation
+let cancelCallback = null; // Stores the callback for cancellation
 
 
-// 2. وظائف مساعدة
-/**
- * يستخرج البيانات من لقطة مستند Firestore.
- * @param {Object} doc - كائن لقطة المستند من Firestore.
- * @returns {Object} كائن يحتوي على معرف المستند وبياناته.
- */
-const getDocData = (doc) => ({ id: doc.id, ...doc.data() });
+// 3. Utility Functions
 
-/**
- * يظهر صفحة معينة ويخفي جميع الصفحات الأخرى.
- * @param {HTMLElement} pageToShow - عنصر DOM للصفحة المراد إظهارها.
- */
-const showPage = (pageToShow) => {
-    [loginPage, mainDashboard, startWorkPage, trackWorkPage, adminPanelPage].forEach(page => {
-        if (page) { // تحقق من وجود العنصر قبل الوصول إلى خاصية display
-            page.style.display = 'none';
-        }
-    });
-    if (pageToShow) {
-        pageToShow.style.display = 'flex'; // استخدام flex بدلاً من block للتخطيط المرن
+// Function to get document data with ID
+const getDocData = (documentSnapshot) => {
+    if (documentSnapshot.exists()) {
+        return { id: documentSnapshot.id, ...documentSnapshot.data() };
     }
-    // إخفاء النوافذ المنبثقة عند تبديل الصفحات
-    if (editRecordModal) editRecordModal.style.display = 'none';
-    if (editEmployeeRateModal) editEmployeeRateModal.style.display = 'none';
-    if (loginErrorModal) loginErrorModal.style.display = 'none';
+    return null;
 };
 
-/**
- * يعرض رسالة توست مؤقتة للمستخدم.
- * @param {string} message - الرسالة المراد عرضها.
- * @param {string} type - نوع الرسالة ('success' أو 'error').
- */
+// Function to show/hide pages
+const showPage = (pageElement) => {
+    const pages = [loginPage, mainDashboard, startWorkPage, trackWorkPage, adminPanelPage];
+    pages.forEach(p => p.style.display = 'none'); // Hide all pages
+    pageElement.style.display = 'flex'; // Show the requested page (using flex for centering)
+
+    // Hide popups/modals when changing main pages
+    if (pageElement !== startWorkPage) {
+        taskSelectionPopup.style.display = 'none';
+    }
+    editRecordModal.style.display = 'none'; // Ensure modal is hidden
+    editEmployeeRateModal.style.display = 'none'; // Ensure new modal is hidden
+    loginErrorModal.style.display = 'none'; // Ensure login error modal is hidden
+    confirmationModal.style.display = 'none'; // Ensure confirmation modal is hidden
+};
+
+// Function to show toast messages (notifications)
 const showToastMessage = (message, type) => {
-    if (!toastMessage) return;
     toastMessage.textContent = message;
-    toastMessage.className = `toast-message ${type}`; // يزيل الفئات القديمة ويضيف الجديدة
+    toastMessage.className = `toast-message ${type}`; // Add type class (success/error)
     toastMessage.style.display = 'block';
-    // إضافة فئة show لتشغيل الانتقال
-    setTimeout(() => {
-        toastMessage.classList.add('show');
-    }, 10); // تأخير بسيط لضمان تطبيق الانتقال
+    // Force reflow to ensure CSS animation plays
+    void toastMessage.offsetWidth;
+    toastMessage.classList.add('show');
 
     setTimeout(() => {
         toastMessage.classList.remove('show');
-        // إخفاء العنصر بعد انتهاء الانتقال
         toastMessage.addEventListener('transitionend', function handler() {
             toastMessage.style.display = 'none';
             toastMessage.removeEventListener('transitionend', handler);
-        });
-    }, 3000); // إخفاء بعد 3 ثوانٍ
+        }, { once: true });
+    }, 3000); // Hide after 3 seconds
 };
 
-/**
- * يظهر أو يخفي مؤشر التحميل.
- * @param {boolean} show - صحيح لإظهار المؤشر، خطأ لإخفائه.
- */
-const showLoadingIndicator = (show) => {
-    if (loadingIndicator) {
-        loadingIndicator.style.display = show ? 'flex' : 'none';
+// Function to show/hide loading indicator
+function showLoadingIndicator(show) { // Changed to function declaration for hoisting
+    loadingIndicator.style.display = show ? 'flex' : 'none';
+}
+
+// Function to show custom confirmation modal
+const showConfirmationModal = (message, onConfirm, onCancel, titleKey = 'confirmAction') => {
+    confirmationModalTitle.textContent = getTranslatedText(titleKey);
+    confirmationModalMessage.textContent = message;
+    confirmationModal.style.display = 'flex'; // Use flex to center
+
+    confirmCallback = onConfirm;
+    cancelCallback = onCancel;
+};
+
+// Event listeners for custom confirmation modal
+confirmModalBtn.addEventListener('click', () => {
+    confirmationModal.style.display = 'none';
+    if (confirmCallback) {
+        confirmCallback();
     }
+});
+
+cancelModalBtn.addEventListener('click', () => {
+    confirmationModal.style.display = 'none';
+    if (cancelCallback) {
+        cancelCallback();
+    }
+});
+
+// Close confirmation modal when clicking outside
+window.addEventListener('click', (event) => {
+    if (event.target === confirmationModal) {
+        confirmationModal.style.display = 'none';
+        if (cancelCallback) { // Call cancel callback if modal is dismissed by clicking outside
+            cancelCallback();
+        }
+    }
+});
+document.getElementById('closeConfirmationModal').addEventListener('click', () => {
+    confirmationModal.style.display = 'none';
+    if (cancelCallback) {
+        cancelCallback();
+    }
+});
+
+
+// Function to show input validation error message
+const showInputError = (inputElement, errorMessageElement, messageKey) => {
+    inputElement.classList.add('is-invalid');
+    errorMessageElement.textContent = getTranslatedText(messageKey);
+    errorMessageElement.classList.add('show');
 };
 
-/**
- * يتحقق من حالة الاتصال بالإنترنت ويعرض رسالة توست إذا كان غير متصل.
- */
+// Function to clear input validation error message
+const clearInputError = (inputElement, errorMessageElement) => {
+    inputElement.classList.remove('is-invalid');
+    errorMessageElement.textContent = '';
+    errorMessageElement.classList.remove('show');
+};
+
+// Internet connection status check
 const checkConnectionStatus = () => {
     if (!navigator.onLine) {
-        showToastMessage(getTranslatedText('internetLost'), 'error');
+        showToastMessage(getTranslatedText('noInternet'), 'error');
     }
 };
 
-/**
- * يحول الدقائق العشرية إلى تنسيق MM:SS.
- * @param {number} totalMinutes - إجمالي الدقائق (عشري).
- * @returns {string} الوقت بتنسيق MM:SS.
- */
-const formatMinutesToMMSS = (totalMinutes) => {
-    if (isNaN(totalMinutes) || totalMinutes < 0) return "00:00";
-    const minutes = Math.floor(totalMinutes);
-    const seconds = Math.round((totalMinutes - minutes) * 60);
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-};
-
-/**
- * يحول إجمالي الدقائق إلى تنسيق HH:MM:SS.
- * @param {number} totalMinutes - إجمالي الدقائق (عشري).
- * @returns {string} الوقت بتنسيق HH:MM:SS.
- */
-const formatTotalMinutesToHHMMSS = (totalMinutes) => {
-    if (isNaN(totalMinutes) || totalMinutes < 0) return "00:00:00";
-    const totalSeconds = Math.round(totalMinutes * 60);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-};
-
-/**
- * يحول الأرقام إلى تنسيق الأرقام الإنجليزية.
- * @param {number|string} number - الرقم المراد تحويله.
- * @returns {string} الرقم بتنسيق الأرقام الإنجليزية.
- */
-const formatNumberToEnglish = (number) => {
-    return String(number).replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d));
-};
-
-// 3. وظائف الوضع الداكن
-/**
- * يحمل تفضيل الوضع الداكن من التخزين المحلي.
- */
+// Dark Mode Functions
 const loadDarkModePreference = () => {
-    const isDarkMode = localStorage.getItem('darkMode') === 'true';
-    if (isDarkMode) {
+    const savedMode = localStorage.getItem('darkMode');
+    if (savedMode === 'enabled') {
         document.body.classList.add('dark-mode');
+        updateDarkModeIcon(true);
+    } else {
+        updateDarkModeIcon(false); // Ensure correct icon if not dark mode
     }
-    updateDarkModeIcon(isDarkMode);
 };
 
-/**
- * يبدل الوضع الداكن ويحفظ التفضيل.
- */
 const toggleDarkMode = () => {
     const isDarkMode = document.body.classList.toggle('dark-mode');
-    localStorage.setItem('darkMode', isDarkMode);
+    localStorage.setItem('darkMode', isDarkMode ? 'enabled' : 'disabled');
     updateDarkModeIcon(isDarkMode);
-    // تحديث الرسم البياني إذا كان موجودًا
     if (taskChart) {
-        taskChart.destroy(); // تدمير الرسم البياني الحالي
-        renderTrackWorkPage(loggedInUser); // إعادة رسمه بالأنماط الجديدة
+        renderTrackWorkPage(); // Re-render chart to apply new colors (will also re-render table)
     }
+    // Re-apply translations to update colors of translated elements if they change with dark mode
+    applyTranslations();
 };
 
-/**
- * يحدث أيقونة زر الوضع الداكن.
- * @param {boolean} isDarkMode - صحيح إذا كان الوضع الداكن نشطًا.
- */
 const updateDarkModeIcon = (isDarkMode) => {
-    if (darkModeToggle) {
-        darkModeToggle.innerHTML = `<i class="fas fa-${isDarkMode ? 'sun' : 'moon'}"></i>`;
+    if (darkModeIcon) {
+        if (isDarkMode) {
+            darkModeIcon.classList.remove('fa-moon');
+            darkModeIcon.classList.add('fa-sun'); // Sun icon for light mode
+        } else {
+            darkModeIcon.classList.remove('fa-sun');
+            darkModeIcon.classList.add('fa-moon'); // Moon icon for dark mode
+        }
     }
 };
 
-// 4. وظائف اللغة
-/**
- * يضبط اللغة الحالية ويطبق الترجمات.
- * @param {string} lang - رمز اللغة ('ar' أو 'en').
- */
+// Function to format decimal minutes (e.g., 9.2) to MM:SS (e.g., 9:12)
+const formatMinutesToMMSS = (decimalMinutes) => {
+    if (isNaN(decimalMinutes) || decimalMinutes < 0) {
+        return '00:00';
+    }
+    // Convert total minutes to total seconds, then round to handle floating point inaccuracies
+    const totalSeconds = Math.round(decimalMinutes * 60); 
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    
+    // Handle cases where seconds might round up to 60 (e.g., 59.9999 -> 60)
+    if (seconds === 60) {
+        return `${minutes + 1}:00`;
+    }
+    
+    const formattedMinutes = String(minutes).padStart(1, '0'); // No need for 2 digits if single digit
+    const formattedSeconds = String(seconds).padStart(2, '0');
+    return `${formattedMinutes}:${formattedSeconds}`;
+};
+
+// Function to format total minutes into HH:MM:SS
+const formatTotalMinutesToHHMMSS = (totalMinutes) => {
+    if (isNaN(totalMinutes) || totalMinutes < 0) {
+        return '00:00:00';
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = Math.floor(totalMinutes % 60);
+    const seconds = Math.round((totalMinutes % 1) * 60); // Get seconds from the decimal part
+
+    const formattedHours = String(hours).padStart(2, '0');
+    const formattedMinutes = String(minutes).padStart(2, '0');
+    const formattedSeconds = String(seconds).padStart(2, '0');
+
+    return `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
+};
+
+// Language Support (Updated with new keys)
+const translations = {
+    'ar': {
+        'loginTitle': 'تسجيل الدخول',
+        'pinPlaceholder': 'أدخل رمز PIN',
+        'loginBtn': 'دخول',
+        'pinError': 'الرجاء إدخال رمز PIN مكون من 8 أرقام فقط.',
+        'pinIncorrect': 'رمز PIN غير صحيح. الرجاء المحاولة مرة أخرى.',
+        'loginError': 'حدث خطأ أثناء تسجيل الدخول. الرجاء المحاولة لاحقاً.',
+        'admin': 'المدير',
+        'totalHoursTitle': 'إجمالي ساعات العمل:',
+        'hoursUnit': 'ساعة',
+        'totalBalanceTitle': 'إجمالي الرصيد:', 
+        'currencyUnit': 'جنيه', 
+        'startWorkOption': 'بدء العمل',
+        'trackWorkOption': 'متابعة العمل',
+        'chooseTask': 'اختر المهمة',
+        'accountName': 'اسم الحساب:',
+        'taskType': 'نوع المهمة:',
+        'confirmBtn': 'تأكيد',
+        'backToDashboard': 'رجوع للرئيسية',
+        'selectAccountTask': 'الرجاء اختيار الحساب ونوع المهمة.',
+        'taskCount': 'عدد المهام المنجزة:',
+        'totalTimeRecorded': 'إجمالي الوقت المسجل:',
+        'saveWorkBtn': 'حفظ العمل',
+        'noTasksToSave': 'لم يتم تسجيل أي مهام لحفظها.',
+        'confirmSave': 'هل أنت متأكد من حفظ العمل الحالي؟',
+        'workSavedSuccess': 'تم حفظ العمل بنجاح!',
+        'errorSavingWork': 'حدث خطأ أثناء حفظ العمل. الرجاء المحاولة مرة أخرى.',
+        'unsavedTasksWarning': 'لديك مهام غير محفوظة. هل أنت متأكد من العودة؟ سيتم فقدان البيانات غير المحفوظة.',
+        'trackWorkTitle': 'متابعة العمل',
+        'serialColumn': 'المسلسل', 
+        'dateColumn': 'التاريخ', 
+        'dailyTotalTimeColumn': 'إجمالي اليوم', 
+        'timingValueColumn': 'التوقيت (دقيقة)', 
+        'taskTimingsSummary': 'ملخص توقيتات المهمة', 
+        'totalForTaskColumn': 'إجمالي المهمة', 
+        'totalForAccountColumn': 'إجمالي الحساب', 
+        'taskColumn': 'المهمة', 
+        'totalTimeMinutesColumn': 'إجمالي الوقت (دقيقة)', 
+        'completedTasksColumn': 'عدد المهام المنجزة', 
+        'noDataToShow': 'لا توجد بيانات لعرضها',
+        'adminPanelTitle': 'لوحة تحكم المدير',
+        'manageUsers': 'إدارة المستخدمين',
+        'newUserName': 'اسم المستخدم الجديد',
+        'newUserPIN': 'رمز PIN للمستخدم (8 أرقام)',
+        'addUserBtn': 'إضافة مستخدم',
+        'currentUsers': 'المستخدمون الحاليون:',
+        'nameColumn': 'الاسم',
+        'pinColumn': 'PIN',
+        'actionsColumn': 'إجراءات',
+        'deleteBtn': 'حذف',
+        'confirmDeleteUser': 'هل أنت متأكد من حذف المستخدم {name}؟',
+        'userDeletedSuccess': 'تم حذف المستخدم بنجاح.',
+        'enterUserNamePin': 'الرجاء إدخال اسم مستخدم ورمز PIN مكون من 8 أرقام.',
+        'pinAlreadyUsed': 'رمز PIN هذا مستخدم بالفعل. الرجاء اختيار رمز آخر.',
+        'userAddedSuccess': 'تم إضافة المستخدم بنجاح!',
+        'errorAddingUser': 'حدث خطأ أثناء إضافة المستخدم.',
+        'manageAccounts': 'إدارة الحسابات',
+        'newAccountName': 'اسم الحساب الجديد',
+        'defaultPricePlaceholder': 'السعر الافتراضي للساعة (جنيه)', // New
+        'addAccountBtn': 'إضافة حساب',
+        'currentAccounts': 'الحسابات الحالية:',
+        'accountNameColumn': 'اسم الحساب',
+        'defaultPriceColumn': 'السعر الافتراضي/ساعة', // New
+        'confirmDeleteAccount': 'هل أنت متأكد من حذف الحساب {name}؟',
+        'accountDeletedSuccess': 'تم حذف الحساب بنجاح.',
+        'enterAccountName': 'الرجاء إدخال اسم الحساب.',
+        'accountExists': 'اسم الحساب هذا موجود بالفعل. الرجاء اختيار اسم آخر.',
+        'accountAddedSuccess': 'تم إضافة الحساب بنجاح!',
+        'errorAddingAccount': 'حدث خطأ أثناء إضافة الحساب.',
+        'manageTasks': 'إدارة المهام والتوقيتات',
+        'newTaskName': 'اسم المهمة الجديدة',
+        'timingPlaceholder': 'التوقيت (بالدقائق)',
+        'minutesPlaceholder': 'دقائق', // New
+        'secondsPlaceholder': 'ثواني', // New
+        'addTimingField': 'إضافة حقل توقيت',
+        'addTaskBtn': 'إضافة مهمة جديدة',
+        'currentTasks': 'المهام الحالية:',
+        'taskNameColumn': 'المهمة',
+        'timingsColumn': 'التوقيتات (دقائق:ثواني)', // Updated display text
+        'confirmDeleteTask': 'هل أنت متأكد من حذف المهمة {name}؟',
+        'taskDeletedSuccess': 'تم حذف المهمة بنجاح.',
+        'enterTaskNameTiming': 'الرجاء إدخال اسم المهمة وتوقيت واحد على الأقل.',
+        'taskExists': 'اسم المهمة هذا موجود بالفعل. الرجاء اختيار اسم آخر.',
+        'taskAddedSuccess': 'تم إضافة المهمة بنجاح!',
+        'errorAddingTask': 'حدث خطأ أثناء إضافة المهمة.',
+        'logoutAdmin': 'تسجيل الخروج',
+        'minutesUnit': 'دقيقة',
+        'cancelSelection': 'إلغاء الاختيار',
+        'undoLastAdd': 'إلغاء آخر إضافة',
+        'noInternet': 'لا يوجد اتصال بالإنترنت. قد لا يتم حفظ البيانات.',
+        'internetRestored': 'تم استعادة الاتصال بالإنترنت.',
+        'internetLost': 'تم فقدان الاتصال بالإنترنت. يرجى التحقق من اتصالك.',
+        'errorLoadingData': 'حدث خطأ في تحميل البيانات. الرجاء المحاولة مرة أخرى.',
+        'manageWorkRecords': 'إدارة سجلات العمل',
+        'allUsers': 'جميع المستخدمين',
+        'filterBtn': 'تصفية',
+        'noMatchingRecords': 'لا توجد سجلات عمل مطابقة.',
+        'userColumn': 'المستخدم',
+        'dateColumn': 'التاريخ',
+        'timeColumn': 'الوقت', 
+        'confirmDeleteRecord': 'هل أنت متأكد من حذف هذا السجل للمستخدم {name}؟',
+        'recordDeletedSuccess': 'تم حذف السجل بنجاح.',
+        'errorDeletingRecord': 'حدث خطأ أثناء حذف السجل.',
+        'editRecord': 'تعديل',
+        'taskCountEdit': 'عدد المهام:',
+        'totalTimeEdit': 'إجمالي الوقت (دقيقة):',
+        'saveChangesBtn': 'حفظ التعديلات',
+        'invalidEditData': 'الرجاء إدخال بيانات صحيحة لجميع الحقول.',
+        'recordUpdatedSuccess': 'تم تحديث السجل بنجاح!',
+        'errorUpdatingRecord': 'حدث خطأ أثناء تحديث السجل.',
+        'sessionResumed': 'تم استئناف الجلسة السابقة.',
+        'sessionResumeError': 'تعذر استئناف الجلسة. البيانات غير متناسقة.',
+        'errorLoadingRecords': 'حدث خطأ أثناء تحميل سجلات العمل.',
+        'notImplemented': 'هذه الميزة لم يتم تطبيقها بعد.',
+        'hello': 'مرحباً، ',
+        'taskDetailsByTiming': 'تفاصيل المهام حسب التوقيت:',
+        'tasksTiming': 'مهام {timing} دقيقة: {count} مهمة (إجمالي {totalTime} دقيقة)',
+        'grandTotal': 'الإجمالي الكلي', 
+        'totalTasksOverall': 'إجمالي عدد المهام', 
+        'totalTimeOverall': ' الوقت', 
+        'totalBalanceOverall': ' الرصيد', 
+        'sessionWarning': 'ستنتهي جلستك بعد {duration} أو {closedBrowserDuration} من إغلاق المتصفح. هل ترغب في تسجيل الخروج الآن؟', // Updated
+        'manageEmployeeRates': 'إدارة أسعار الموظفين والإجماليات', // New
+        'employeeNameColumn': 'الموظف', // New
+        'customPriceColumn': 'السعر المخصص/ساعة', // New
+        'employeeTotalHoursColumn': 'إجمالي الساعات', // New
+        'employeeTotalBalanceColumn': 'إجمالي الرصيد المستحق', // New
+        'editCustomRateTitle': 'تعديل السعر المخصص', // New
+        'employeeNameLabel': 'الموظف:', // New
+        'accountNameLabel': 'الحساب:', // New
+        'defaultPriceLabel': 'السعر الافتراضي:', // New
+        'customPriceInputLabel': 'السعر المخصص (جنيه):', // New
+        'rateUpdated': 'تم تحديث السعر المخصص بنجاح.', // New
+        'invalidTime': 'يرجى إدخال قيم صالحة للدقائق والثواني.', // New
+        'invalidPrice': 'يرجى إدخال سعر صالح.', // New
+        'modify': 'تعديل', // New
+        'notSet': 'غير محدد', // New
+        'unauthorizedAccess': 'وصول غير مصرح به. يرجى تسجيل الدخول كمسؤول.', // New
+        'error': 'خطأ', // New translation for modal title
+        'close': 'إغلاق', // New translation for modal button
+        'accountTotalTimeColumnShort': 'وقت الحساب', // New shorter translation for the column
+        'accountBalanceColumn': 'رصيد الحساب', // New
+        'timeSinceLastClick': 'آخر نقرة منذ {minutes} دقيقة و {seconds} ثانية.', // New
+        'tasksSummaryTooltip': '{count} مهمات بـ {time} دقائق', // New
+        'confirmAction': 'تأكيد الإجراء', // New translation for custom confirmation modal title
+        'cancelBtn': 'إلغاء', // New translation for custom confirmation modal cancel button
+        'allAccounts': 'جميع الحسابات', // New translation for account filter
+        'allTasks': 'جميع المهام', // New translation for task filter
+        'requiredField': 'هذا الحقل مطلوب.', // New validation message
+        'invalidPinLength': 'يجب أن يتكون رمز PIN من 8 أرقام.', // New validation message
+        'invalidNumber': 'الرجاء إدخال رقم صالح.', // New validation message
+        'invalidTimeInput': 'الرجاء إدخال قيم صحيحة للدقائق والثواني.', // New validation message
+        'saving': 'جارٍ الحفظ...', // New button text for saving state
+        'deleting': 'جارٍ الحذف...', // New button text for deleting state
+        'adding': 'جارٍ الإضافة...', // New button text for adding state
+        'updating': 'جارٍ التحديث...', // New button text for updating state
+    },
+    'en': {
+        'loginTitle': 'Login',
+        'pinPlaceholder': 'Enter PIN',
+        'loginBtn': 'Login',
+        'pinError': 'Please enter an 8-digit PIN only.',
+        'pinIncorrect': 'Incorrect PIN. Please try again.',
+        'loginError': 'An error occurred during login. Please try again later.',
+        'admin': 'Admin',
+        'totalHoursTitle': 'Total Work Hours:',
+        'hoursUnit': 'hours',
+        'totalBalanceTitle': 'Total Balance:', 
+        'currencyUnit': 'EGP', 
+        'startWorkOption': 'Start Work',
+        'trackWorkOption': 'Track Work',
+        'chooseTask': 'Select Task',
+        'accountName': 'Account Name:',
+        'taskType': 'Task Type:',
+        'confirmBtn': 'Confirm',
+        'backToDashboard': 'Back to Dashboard',
+        'selectAccountTask': 'Please select both an account and a task type.',
+        'taskCount': 'Completed Tasks:',
+        'totalTimeRecorded': 'Total Recorded Time:',
+        'saveWorkBtn': 'Save Work',
+        'noTasksToSave': 'No tasks recorded to save.',
+        'confirmSave': 'Are you sure you want to save the current work?',
+        'workSavedSuccess': 'Work saved successfully!',
+        'errorSavingWork': 'An error occurred while saving work. Please try again.',
+        'unsavedTasksWarning': 'You have unsaved tasks. Are you sure you want to go back? Unsaved data will be lost.',
+        'trackWorkTitle': 'Work Tracking',
+        'serialColumn': 'Serial', 
+        'dateColumn': 'Date', 
+        'dailyTotalTimeColumn': 'Daily Total Time', 
+        'timingValueColumn': 'Timing (minutes)', 
+        'taskTimingsSummary': 'Task Timings Summary', 
+        'totalForTaskColumn': 'Total for Task', 
+        'totalForAccountColumn': 'Total for Account', 
+        'taskColumn': 'Task', 
+        'totalTimeMinutesColumn': 'Total Time (minutes)', 
+        'completedTasksColumn': 'Completed Tasks', 
+        'noDataToShow': 'No data to display',
+        'adminPanelTitle': 'Admin Panel',
+        'manageUsers': 'Manage Users',
+        'newUserName': 'New User Name',
+        'newUserPIN': 'User PIN (8 digits)',
+        'addUserBtn': 'Add User',
+        'currentUsers': 'Current Users:',
+        'nameColumn': 'Name',
+        'pinColumn': 'PIN',
+        'actionsColumn': 'Actions',
+        'deleteBtn': 'Delete',
+        'confirmDeleteUser': 'Are you sure you want to delete user {name}?',
+        'userDeletedSuccess': 'User deleted successfully.',
+        'enterUserNamePin': 'Please enter a username and an 8-digit PIN.',
+        'pinAlreadyUsed': 'This PIN is already in use. Please choose another.',
+        'userAddedSuccess': 'User added successfully!',
+        'errorAddingUser': 'An error occurred while adding the user.',
+        'manageAccounts': 'Manage Accounts',
+        'newAccountName': 'New Account Name',
+        'defaultPricePlaceholder': 'Default Price per Hour (EGP)', // New
+        'addAccountBtn': 'Add Account',
+        'currentAccounts': 'Current Accounts:',
+        'accountNameColumn': 'Account Name',
+        'defaultPriceColumn': 'Default Price/Hour', // New
+        'confirmDeleteAccount': 'Are you sure you want to delete account {name}?',
+        'accountDeletedSuccess': 'Account deleted successfully.',
+        'enterAccountName': 'Please enter an account name.',
+        'accountExists': 'This account name already exists. Please choose another.',
+        'accountAddedSuccess': 'Account added successfully!',
+        'errorAddingAccount': 'An error occurred while adding the account.',
+        'manageTasks': 'Manage Tasks & Timings',
+        'newTaskName': 'New Task Name',
+        'timingPlaceholder': 'Timing (minutes)',
+        'minutesPlaceholder': 'Minutes', // New
+        'secondsPlaceholder': 'Seconds', // New
+        'addTimingField': 'Add Timing Field',
+        'addTaskBtn': 'Add New Task',
+        'currentTasks': 'Current Tasks:',
+        'taskNameColumn': 'Task',
+        'timingsColumn': 'Timings (minutes:seconds)', // Updated display text
+        'confirmDeleteTask': 'Are you sure you want to delete task {name}?',
+        'taskDeletedSuccess': 'Task deleted successfully.',
+        'enterTaskNameTiming': 'Please enter a task name and at least one timing.',
+        'taskExists': 'This task name already exists. Please choose another.',
+        'taskAddedSuccess': 'Task added successfully!',
+        'errorAddingTask': 'An error occurred while adding the task.',
+        'logoutAdmin': 'Logout',
+        'minutesUnit': 'minutes',
+        'cancelSelection': 'Cancel Selection',
+        'undoLastAdd': 'Undo Last Add',
+        'noInternet': 'No internet connection. Data might not be saved.',
+        'internetRestored': 'Internet connection restored.',
+        'internetLost': 'Internet connection lost. Please check your connection.',
+        'errorLoadingData': 'An error occurred while loading data. Please try again.',
+        'manageWorkRecords': 'Manage Work Records',
+        'allUsers': 'All Users',
+        'filterBtn': 'Filter',
+        'noMatchingRecords': 'No matching work records.',
+        'userColumn': 'User',
+        'dateColumn': 'Date',
+        'timeColumn': 'Time', 
+        'confirmDeleteRecord': 'Are you sure you want to delete this record for user {name}?',
+        'recordDeletedSuccess': 'Record deleted successfully.',
+        'errorDeletingRecord': 'An error occurred while deleting the record.',
+        'editRecord': 'Edit',
+        'taskCountEdit': 'Task Count:',
+        'totalTimeEdit': 'Total Time (minutes):',
+        'saveChangesBtn': 'Save Changes',
+        'invalidEditData': 'Please enter valid data for all fields.',
+        'recordUpdatedSuccess': 'Record updated successfully!',
+        'errorUpdatingRecord': 'An error occurred while updating the record.',
+        'sessionResumed': 'Previous session resumed.',
+        'sessionResumeError': 'Could not resume session. Data inconsistent.',
+        'errorLoadingRecords': 'An error occurred while loading work records.',
+        'notImplemented': 'This feature is not yet implemented.',
+        'hello': 'Hi, ',
+        'taskDetailsByTiming': 'Task Details by Timing:',
+        'tasksTiming': '{count} tasks of {timing} minutes (Total {totalTime} minutes)',
+        'grandTotal': 'Grand Total', 
+        'totalTasksOverall': 'Total Tasks Overall', 
+        'totalTimeOverall': 'Total Time Overall', 
+        'totalBalanceOverall': 'Total Balance Overall', 
+        'sessionWarning': 'Your session will expire in {duration} or {closedBrowserDuration} after closing the browser. Do you want to log out now?', // Updated
+        'manageEmployeeRates': 'Manage Employee Rates & Totals', // New
+        'employeeNameColumn': 'Employee', // New
+        'customPriceColumn': 'Custom Price/Hour', // New
+        'employeeTotalHoursColumn': 'Total Hours', // New
+        'employeeTotalBalanceColumn': 'Total Balance Due', // New
+        'editCustomRateTitle': 'Edit Custom Rate', // New
+        'employeeNameLabel': 'Employee:', // New
+        'accountNameLabel': 'Account:', // New
+        'defaultPriceLabel': 'Default Price:', // New
+        'customPriceInputLabel': 'Custom Price (EGP):', // New
+        'rateUpdated': 'Custom rate updated successfully.', // New
+        'invalidTime': 'Please enter valid values for minutes and seconds.', // New
+        'invalidPrice': 'Please enter a valid price.', // New
+        'modify': 'Modify', // New
+        'notSet': 'Not Set', // New
+        'unauthorizedAccess': 'Unauthorized access. Please log in as an administrator.', // New
+        'error': 'Error', // New translation for modal title
+        'close': 'Close', // New translation for modal button
+        'accountTotalTimeColumnShort': 'Account Time', // New shorter translation for the column
+        'accountBalanceColumn': 'Account Balance', // New
+        'timeSinceLastClick': 'Last click was {minutes} minutes and {seconds} seconds ago.', // New
+        'tasksSummaryTooltip': '{count} tasks of {time} minutes', // New
+        'confirmAction': 'Confirm Action', // New translation for custom confirmation modal title
+        'cancelBtn': 'Cancel', // New translation for custom confirmation modal cancel button
+        'allAccounts': 'All Accounts', // New translation for account filter
+        'allTasks': 'All Tasks', // New translation for task filter
+        'requiredField': 'This field is required.', // New validation message
+        'invalidPinLength': 'PIN must be 8 digits.', // New validation message
+        'invalidNumber': 'Please enter a valid number.', // New validation message
+        'invalidTimeInput': 'Please enter valid minutes and seconds.', // New validation message
+        'saving': 'Saving...', // New button text for saving state
+        'deleting': 'Deleting...', // New button text for deleting state
+        'adding': 'Adding...', // New button text for adding state
+        'updating': 'Updating...', // New button text for updating state
+    }
+};
+
+let currentLanguage = localStorage.getItem('appLanguage') || 'ar'; // Default to Arabic
+
 const setLanguage = (lang) => {
     currentLanguage = lang;
-    localStorage.setItem('language', lang);
-    document.documentElement.setAttribute('lang', lang);
-    document.documentElement.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
-    document.body.style.textAlign = lang === 'ar' ? 'right' : 'left';
+    localStorage.setItem('appLanguage', lang);
     applyTranslations();
-    // تحديث الرسم البياني إذا كان موجودًا
+    document.documentElement.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
+    
+    // Re-render chart if it exists to update labels direction and colors
     if (taskChart) {
-        taskChart.destroy(); // تدمير الرسم البياني الحالي
-        renderTrackWorkPage(loggedInUser); // إعادة رسمه باللغة الجديدة
+        taskChart.options.plugins.legend.rtl = (lang === 'ar');
+        taskChart.options.plugins.tooltip.rtl = (lang === 'ar');
+        // Update legend and title colors based on dark mode
+        const isDarkMode = document.body.classList.contains('dark-mode');
+        taskChart.options.plugins.legend.labels.color = isDarkMode ? '#BDC3C7' : '#333'; // Light gray in dark, dark gray in light
+        taskChart.options.plugins.title.color = isDarkMode ? '#76D7C4' : '#2c3e50'; // Soft teal in dark, dark blue/gray in light
+        taskChart.update();
     }
+    // Update PIN input direction if needed (usually handled by dir=rtl/ltr on html)
+    pinInputs.forEach(input => {
+        if (lang === 'ar') {
+            input.style.direction = 'ltr'; // PIN numbers are usually LTR even in RTL context
+        } else {
+            input.style.direction = 'ltr';
+        }
+    });
 };
 
-/**
- * يحصل على النص المترجم لمفتاح معين.
- * @param {string} key - مفتاح الترجمة.
- * @param {Object} [replacements={}] - كائن من الاستبدالات للنص.
- * @returns {string} النص المترجم.
- */
-const getTranslatedText = (key, replacements = {}) => {
-    let text = translations[currentLanguage][key] || key;
-    for (const placeholder in replacements) {
-        text = text.replace(`{${placeholder}}`, replacements[placeholder]);
+const getTranslatedText = (key, params = {}) => {
+    let text = translations[currentLanguage][key];
+    if (text) {
+        for (const param in params) {
+            text = text.replace(`{${param}}`, params[param]);
+        }
+        return text;
     }
-    return text;
+    return `[${key}]`; // Fallback for missing translation
 };
 
-/**
- * يطبق الترجمات على جميع عناصر DOM التي تحتوي على سمة `data-key`.
- */
 const applyTranslations = () => {
+    // Translate elements with data-key attribute
     document.querySelectorAll('[data-key]').forEach(element => {
         const key = element.getAttribute('data-key');
-        // إذا كان العنصر input ولديه placeholder
         if (element.tagName === 'INPUT' && element.hasAttribute('placeholder')) {
-            element.setAttribute('placeholder', getTranslatedText(key));
-        } else {
+            element.placeholder = getTranslatedText(key);
+        } else if (key === 'hello') {
+            // Special handling for "Hello, [User Name]"
+            element.childNodes[0].nodeValue = getTranslatedText(key);
+        } else if (key === 'taskCount' || key === 'totalTimeRecorded' || key === 'totalHoursTitle' || key === 'totalBalanceTitle' || key === 'employeeNameLabel' || key === 'accountNameLabel' || key === 'defaultPriceLabel' || key === 'customPriceInputLabel') {
+            // Special handling for summary table labels and dashboard titles and modal labels
+            const spanElement = element.querySelector('span');
+            if (spanElement) {
+                spanElement.textContent = getTranslatedText(key);
+            } else {
+                element.textContent = getTranslatedText(key);
+            }
+        } else if (key === 'sessionWarning') { // Special handling for session warning to include dynamic duration
+            const durationHours = SESSION_DURATION_MS / (60 * 60 * 1000);
+            const closedBrowserDurationHours = SESSION_CLOSED_BROWSER_MS / (60 * 60 * 1000);
+            element.textContent = getTranslatedText(key, { duration: `${durationHours} ${getTranslatedText('hoursUnit')}`, closedBrowserDuration: `${closedBrowserDurationHours} ${getTranslatedText('hourUnitSingular')}` });
+        }
+        else {
             element.textContent = getTranslatedText(key);
         }
     });
 
-    // تحديث نصوص الأزرار الخاصة باللغة
-    if (langArBtn) langArBtn.textContent = getTranslatedText('العربية');
-    if (langEnBtn) langEnBtn.textContent = getTranslatedText('English');
+    // Specific elements that need manual translation or re-rendering
+    // Update placeholder for dynamically added timing inputs
+    const newTimingMinutesInputs = newTimingsContainer.querySelectorAll('.new-task-timing-minutes');
+    newTimingMinutesInputs.forEach(input => {
+        input.placeholder = getTranslatedText('minutesPlaceholder');
+    });
+    const newTimingSecondsInputs = newTimingsContainer.querySelectorAll('.new-task-timing-seconds');
+    newTimingSecondsInputs.forEach(input => {
+        input.placeholder = getTranslatedText('secondsPlaceholder');
+    });
 
-    // تحديث اتجاه الأزرار
-    if (langArBtn) {
-        if (currentLanguage === 'ar') {
-            langArBtn.classList.add('active');
-            langEnBtn.classList.remove('active');
-        } else {
-            langArBtn.classList.remove('active');
-            langEnBtn.classList.add('active');
-        }
+    // Update undo button text if they exist
+    document.querySelectorAll('.undo-btn').forEach(btn => {
+        btn.textContent = getTranslatedText('undoLastAdd');
+    });
+    
+    // Update confirm/cancel buttons in custom modal
+    document.getElementById('confirmModalBtn').textContent = getTranslatedText('confirmBtn');
+    document.getElementById('cancelModalBtn').textContent = getTranslatedText('cancelBtn');
+
+
+    // Re-render dynamic elements that contain text, like task timing buttons
+    if (startWorkPage.style.display === 'flex' && taskSelectionPopup.style.display === 'none') {
+         renderTaskTimingButtons(); // Re-render to update units
+         updateWorkSummary(); // Re-render detailed summary
+    }
+    // Admin panel tables need re-rendering to update texts
+    if (adminPanelPage.style.display === 'flex') {
+        renderAdminPanel(); // This will call loadAndDisplay functions which re-render tables
+    }
+    // Re-render track work page to update headers and content
+    if (trackWorkPage.style.display === 'flex') {
+        renderTrackWorkPage();
     }
 };
 
-// 5. وظائف إدارة الجلسة
-/**
- * يحفظ حالة الجلسة في التخزين المحلي.
- */
-const saveSession = () => {
-    if (loggedInUser) {
-        localStorage.setItem('loggedInUser', JSON.stringify(loggedInUser));
-        localStorage.setItem('sessionExpiry', Date.now() + (1 * 60 * 60 * 1000)); // ساعة واحدة صلاحية
-    }
+// Function to format numbers to English digits
+const formatNumberToEnglish = (num) => {
+    return num.toLocaleString('en-US', { useGrouping: false });
 };
 
-/**
- * يمسح حالة الجلسة من التخزين المحلي.
- */
+// 4. Session Management Functions
+const saveSession = (user) => {
+    const sessionExpiry = Date.now() + SESSION_DURATION_MS;
+    localStorage.setItem('loggedInUser', JSON.stringify(user));
+    localStorage.setItem('sessionExpiry', sessionExpiry.toString());
+};
+
 const clearSession = () => {
     localStorage.removeItem('loggedInUser');
     localStorage.removeItem('sessionExpiry');
-    loggedInUser = null;
+    loggedInUser = null; // Clear in-memory user data
 };
 
-/**
- * يحمل حالة الجلسة من التخزين المحلي.
- * @returns {Promise<void>}
- */
 const loadSession = async () => {
     const storedUser = localStorage.getItem('loggedInUser');
-    const sessionExpiry = localStorage.getItem('sessionExpiry');
+    const storedExpiry = localStorage.getItem('sessionExpiry');
 
-    if (storedUser && sessionExpiry && Date.now() < parseInt(sessionExpiry)) {
+    if (storedUser && storedExpiry && Date.now() < parseInt(storedExpiry)) {
         loggedInUser = JSON.parse(storedUser);
-        // إعادة المصادقة باستخدام الرمز المخصص إذا كان متاحًا
-        try {
-            if (auth) { // تأكد من تهيئة auth قبل الاستخدام
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-                showPage(mainDashboard);
-                await fetchAllStaticData(); // جلب البيانات الثابتة بعد استئناف الجلسة
-                renderMainDashboard();
-            } else {
-                console.error("Firebase Auth لم يتم تهيئته بشكل صحيح.");
-                showToastMessage(getTranslatedText('error'), 'error');
-                clearSession();
-                showPage(loginPage);
-            }
-        } catch (error) {
-            console.error("Error re-authenticating:", error);
-            showToastMessage(getTranslatedText('error'), 'error');
-            clearSession();
-            showPage(loginPage);
+        // Fetch all static data once on session load
+        await fetchAllStaticData();
+        if (loggedInUser.id === 'admin') {
+            showPage(adminPanelPage); // This will hide loginPage
+            await renderAdminPanel(); // Ensure admin panel is rendered
+        } else {
+            showPage(mainDashboard); // This will hide loginPage
+            await renderMainDashboard(); // Ensure main dashboard is rendered
         }
+        return true; // Session resumed
     } else {
-        clearSession();
-        showPage(loginPage);
+        clearSession(); // Clear expired or invalid session
+        // loginPage is already visible by default in HTML, no need to call showPage(loginPage)
+        return false; // No session or not resumed
     }
 };
 
-// 6. جلب البيانات وتخزينها مؤقتًا
-/**
- * يجلب جميع البيانات الثابتة (المستخدمين، الحسابات، تعريفات المهام، الأسعار المخصصة) من Firestore.
- * ويقوم بإعداد مستمعي onSnapshot للتحديثات في الوقت الفعلي.
- */
-const fetchAllStaticData = async () => {
-    if (!db) {
-        console.error("Firestore لم يتم تهيئته بشكل صحيح. لا يمكن جلب البيانات.");
-        showToastMessage(getTranslatedText('error'), 'error');
-        return;
+// Warn user before leaving if there are unsaved tasks
+window.addEventListener('beforeunload', (event) => {
+    if (currentSessionTasks.length > 0 && !isSavingWork && loggedInUser && loggedInUser.id !== 'admin') {
+        event.preventDefault();
+        event.returnValue = ''; // Required for Chrome to show the prompt
+        return ''; // Required for Firefox to show the prompt
     }
+    // Optional: Add a general warning for session expiry if the user is logged in
+    if (loggedInUser) {
+        // This will show the browser's default "Are you sure you want to leave?" prompt.
+        // Custom modals are not allowed here for security reasons.
+        event.preventDefault();
+        event.returnValue = getTranslatedText('sessionWarning', {
+            duration: `${SESSION_DURATION_MS / (60 * 60 * 1000)} ${getTranslatedText('hoursUnit')}`,
+            closedBrowserDuration: `${SESSION_CLOSED_BROWSER_MS / (60 * 60 * 1000)} ${getTranslatedText('hoursUnit')}` // Changed to hoursUnit for consistency
+        });
+        return event.returnValue;
+    }
+});
+
+// New function to fetch all static data
+const fetchAllStaticData = async () => {
     showLoadingIndicator(true);
     try {
-        // مستمع المستخدمين
-        onSnapshot(collection(db, `artifacts/${appId}/public/data/users`), (snapshot) => {
-            allUsers = snapshot.docs.map(getDocData);
-            console.log("Users updated:", allUsers);
-            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage && adminPanelPage.style.display === 'flex') {
-                loadAndDisplayUsers();
-                populateUserFilter();
-                renderEmployeeRatesAndTotals(); // تحديث إجماليات الموظفين
+        // Fetch Users
+        const usersCollectionRef = collection(db, 'users');
+        const usersSnapshot = await getDocs(usersCollectionRef);
+        allUsers = usersSnapshot.docs.map(getDocData);
+
+        // Fetch Accounts
+        const accountsCollectionRef = collection(db, 'accounts');
+        const accountsSnapshot = await getDocs(accountsCollectionRef);
+        allAccounts = accountsSnapshot.docs.map(getDocData);
+
+        // Fetch Task Definitions
+        const tasksCollectionRef = collection(db, 'tasks');
+        const tasksSnapshot = await getDocs(tasksCollectionRef);
+        allTaskDefinitions = tasksSnapshot.docs.map(getDocData);
+
+    } catch (error) {
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
+    } finally {
+        showLoadingIndicator(false);
+    }
+};
+
+// Function to show the custom login error modal
+const showLoginErrorModal = (message) => {
+    loginErrorModalTitle.textContent = getTranslatedText('error');
+    loginErrorModalMessage.textContent = message;
+    loginErrorModal.style.display = 'flex'; // Use flex to center
+};
+
+// 5. Login Logic (Updated for 8 PIN fields and custom error modal)
+const handleLogin = async () => {
+    const fullPin = pinInputs.map(input => input.value).join('');
+    loginErrorModal.style.display = 'none'; // Hide any previous error modal
+
+    // Clear any previous PIN input errors
+    pinInputs.forEach(input => {
+        input.classList.remove('is-invalid');
+    });
+
+    if (fullPin.length !== 8 || !/^\d+$/.test(fullPin)) { // Check for 8 digits only
+        showLoginErrorModal(getTranslatedText('pinError'));
+        pinInputs.forEach(input => input.classList.add('is-invalid')); // Highlight invalid PIN inputs
+        return;
+    }
+
+    showLoadingIndicator(true);
+    try {
+        // Ensure adminPin document exists and retrieve its value
+        const adminDocRef = doc(db, 'settings', 'adminPin'); 
+        let adminPinValue = "12345678"; // Default admin PIN
+
+        try {
+            const adminDocSnapshot = await getDoc(adminDocRef); 
+            
+            // If the document exists, use its pin. Provide a fallback in case 'pin' field is missing.
+            if (adminDocSnapshot.exists()) { 
+                adminPinValue = adminDocSnapshot.data().pin || adminPinValue;
+            } else {
+                // If the document does not exist, create it with the default PIN
+                await setDoc(adminDocRef, { pin: adminPinValue }); 
             }
-        }, (error) => {
-            console.error("Error listening to users:", error);
-            showToastMessage(getTranslatedText('error'), 'error');
+        } catch (error) {
+            // In case of an error accessing Firestore, we proceed with the default PIN.
+            // The user will see a login error if the default PIN doesn't match their input.
+        }
+
+        // Fetch all static data immediately after successful login or session load
+        await fetchAllStaticData();
+
+        // Now use adminPinValue for comparison
+        if (fullPin === adminPinValue) {
+            loggedInUser = { id: 'admin', name: getTranslatedText('admin'), role: 'admin' };
+            saveSession(loggedInUser); // Save admin session
+            showPage(adminPanelPage);
+            await renderAdminPanel(); // Call renderAdminPanel here after successful login
+            pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
+            return;
+        }
+
+        const usersCollectionRef = collection(db, 'users'); 
+        const userQueryRef = query(usersCollectionRef, where('pin', '==', fullPin), limit(1)); 
+        const userQuerySnapshot = await getDocs(userQueryRef); 
+
+        if (!userQuerySnapshot.empty) {
+            loggedInUser = getDocData(userQuerySnapshot.docs[0]);
+            // Ensure user has a role, default to 'user' if not explicitly set
+            if (!loggedInUser.role) {
+                loggedInUser.role = 'user';
+            }
+            saveSession(loggedInUser); // Save user session
+            showPage(mainDashboard);
+            await renderMainDashboard(); // Call renderMainDashboard here after successful login
+            pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
+            return;
+        }
+
+        showLoginErrorModal(getTranslatedText('pinIncorrect')); // Use custom modal for incorrect PIN
+        pinInputs.forEach(input => input.classList.add('is-invalid')); // Highlight invalid PIN inputs
+
+    } catch (error) {
+        // Check if the error is due to network or permissions
+        if (error.code === 'unavailable' || error.code === 'permission-denied') {
+            showLoginErrorModal(getTranslatedText('noInternet') + ' أو مشكلة في الصلاحيات.');
+        } else {
+            showLoginErrorModal(getTranslatedText('loginError'));
+        }
+    } finally {
+        showLoadingIndicator(false);
+    }
+};
+
+// Logout function (defined globally for accessibility)
+const logout = () => {
+    clearSession();
+    showPage(loginPage);
+    pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
+    pinInputs[0].focus(); // Focus on first PIN input
+};
+
+// 6. Main Dashboard Logic (Updated for dynamic balance calculation)
+const renderMainDashboard = async () => {
+    if (!loggedInUser || loggedInUser.role === 'admin') {
+        // If admin, they should not be on main dashboard, redirect to login or admin panel
+        showPage(adminPanelPage); // Or loginPage if they are not truly admin
+        return;
+    }
+    userNameDisplay.textContent = loggedInUser.name; // Display user name
+    showLoadingIndicator(true);
+    try {
+        const userId = loggedInUser.id;
+        const workRecordsCollectionRef = collection(db, 'workRecords'); 
+        const recordsQueryRef = query(workRecordsCollectionRef, where('userId', '==', userId)); 
+        const recordsSnapshot = await getDocs(recordsQueryRef); 
+        let totalMinutesWorked = 0;
+        let totalBalance = 0;
+        
+        // Fetch all accounts to get default prices (using cached data)
+        const accountsMap = new Map(allAccounts.map(acc => [acc.id, acc]));
+
+        // Fetch custom rates for the logged-in user
+        const userCustomRatesCol = collection(db, 'userAccountRates');
+        const userRatesQuery = query(userCustomRatesCol, where('userId', '==', userId));
+        const userRatesSnapshot = await getDocs(userRatesQuery);
+        const userCustomRatesMap = new Map(); // Map<accountId, customPricePerHour>
+        userRatesSnapshot.forEach(docSnap => {
+            const rate = getDocData(docSnap);
+            userCustomRatesMap.set(rate.accountId, rate.customPricePerHour);
         });
 
-        // مستمع الحسابات
-        onSnapshot(collection(db, `artifacts/${appId}/public/data/accounts`), (snapshot) => {
-            allAccounts = snapshot.docs.map(getDocData);
-            console.log("Accounts updated:", allAccounts);
-            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage && adminPanelPage.style.display === 'flex') {
-                loadAndDisplayAccounts();
-                renderEmployeeRatesAndTotals(); // تحديث إجماليات الموظفين
-            }
-        }, (error) => {
-            console.error("Error listening to accounts:", error);
-            showToastMessage(getTranslatedText('error'), 'error');
-        });
 
-        // مستمع تعريفات المهام
-        onSnapshot(collection(db, `artifacts/${appId}/public/data/taskDefinitions`), (snapshot) => {
-            allTaskDefinitions = snapshot.docs.map(getDocData);
-            console.log("Task definitions updated:", allTaskDefinitions);
-            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage && adminPanelPage.style.display === 'flex') {
-                loadAndDisplayTaskDefinitions();
-            }
-        }, (error) => {
-            console.error("Error listening to task definitions:", error);
-            showToastMessage(getTranslatedText('error'), 'error');
-        });
+        if (!recordsSnapshot.empty) {
+            recordsSnapshot.forEach(doc => {
+                const record = doc.data();
+                totalMinutesWorked += record.totalTime; // totalTime is already in minutes
 
-        // مستمع الأسعار المخصصة للموظفين
-        onSnapshot(collection(db, `artifacts/${appId}/public/data/employeeCustomRates`), (snapshot) => {
-            allEmployeeRates = snapshot.docs.map(getDocData);
-            console.log("Employee custom rates updated:", allEmployeeRates);
-            if (loggedInUser && loggedInUser.role === 'admin' && adminPanelPage && adminPanelPage.style.display === 'flex') {
-                renderEmployeeRatesAndTotals(); // تحديث إجماليات الموظفين
-            }
-        }, (error) => {
-            console.error("Error listening to employee custom rates:", error);
-            showToastMessage(getTranslatedText('error'), 'error');
-        });
-
-        // مستمع سجلات العمل (للمدير فقط)
-        if (loggedInUser && loggedInUser.role === 'admin') {
-            onSnapshot(collection(db, `artifacts/${appId}/public/data/workRecords`), (snapshot) => {
-                allWorkRecords = snapshot.docs.map(getDocData);
-                console.log("Work records updated:", allWorkRecords);
-                if (adminPanelPage && adminPanelPage.style.display === 'flex') {
-                    loadAndDisplayWorkRecords(recordFilterUser.value === "" ? null : recordFilterUser.value, recordFilterDate.value === "" ? null : recordFilterDate.value);
+                const account = accountsMap.get(record.accountId);
+                if (account) {
+                    let pricePerHour = account.defaultPricePerHour || 0; // Default price
+                    // Check if there's a custom rate for this user and account
+                    if (userCustomRatesMap.has(record.accountId)) {
+                        pricePerHour = userCustomRatesMap.get(record.accountId);
+                    }
+                    totalBalance += (record.totalTime / 60) * pricePerHour;
                 }
-                renderMainDashboard(); // لتحديث إجماليات المستخدمين العاديين أيضًا
-                renderTrackWorkPage(loggedInUser); // لتحديث صفحة تتبع العمل
-            }, (error) => {
-                console.error("Error listening to work records:", error);
-                showToastMessage(getTranslatedText('error'), 'error');
             });
         }
 
+        totalHoursDisplay.textContent = formatNumberToEnglish(formatTotalMinutesToHHMMSS(totalMinutesWorked)); // Display in HH:MM:SS
+        totalBalanceDisplay.textContent = formatNumberToEnglish(totalBalance.toFixed(2)); // Display total balance
+
     } catch (error) {
-        console.error("Error fetching static data:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     } finally {
         showLoadingIndicator(false);
     }
 };
 
-
-// 7. منطق تسجيل الدخول
-/**
- * يعرض نافذة خطأ تسجيل الدخول المخصصة.
- * @param {string} titleKey - مفتاح الترجمة لعنوان الخطأ.
- * @param {string} messageKey - مفتاح الترجمة لرسالة الخطأ.
- */
-const showLoginErrorModal = (titleKey, messageKey) => {
-    if (loginErrorModal && loginErrorModalTitle && loginErrorModalMessage) {
-        loginErrorModalTitle.textContent = getTranslatedText(titleKey);
-        loginErrorModalMessage.textContent = getTranslatedText(messageKey);
-        loginErrorModal.style.display = 'flex';
+// Moved event listener logic into named functions for clarity and proper binding
+const handleStartWorkOptionClick = async () => {
+    if (loggedInUser && loggedInUser.id !== 'admin') {
+        showPage(startWorkPage);
+        await initializeStartWorkPage();
+        updateSaveButtonState(); // Initial state for save button
     }
 };
 
-/**
- * يتعامل مع محاولة تسجيل الدخول.
- */
-const handleLogin = async () => {
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot handle login.");
-        return;
+const handleTrackWorkOptionClick = async () => {
+    if (loggedInUser && loggedInUser.id !== 'admin') {
+        showPage(trackWorkPage);
+        await renderTrackWorkPage(); // This will now also render the chart
     }
+};
 
-    showLoadingIndicator(true);
+// 7. Start Work Page Logic
+const fetchAccountsAndTasks = async () => {
+    // Now using cached data from allAccounts and allTaskDefinitions
+    // No need to fetch from Firestore again here
     try {
-        const pin = Array.from(pinInputFields).map(input => input.value).join('');
-
-        if (pin.length !== 8 || !/^\d{8}$/.test(pin)) {
-            showLoginErrorModal('error', 'invalidPIN');
-            return;
-        }
-
-        // التحقق من PIN المسؤول
-        const adminQuery = query(collection(db, `artifacts/${appId}/public/data/users`), where("pin", "==", pin), where("role", "==", "admin"));
-        const adminSnapshot = await getDocs(adminQuery);
-
-        if (!adminSnapshot.empty) {
-            loggedInUser = getDocData(adminSnapshot.docs[0]);
-            loggedInUser.role = 'admin'; // تأكيد الدور
-            saveSession();
-            await fetchAllStaticData(); // جلب جميع البيانات للمدير
-            showPage(adminPanelPage);
-            renderAdminPanel();
-            return;
-        }
-
-        // التحقق من PIN المستخدم العادي
-        const userQuery = query(collection(db, `artifacts/${appId}/public/data/users`), where("pin", "==", pin), where("role", "==", "user"));
-        const userSnapshot = await getDocs(userQuery);
-
-        if (!userSnapshot.empty) {
-            loggedInUser = getDocData(userSnapshot.docs[0]);
-            loggedInUser.role = 'user'; // تأكيد الدور
-            saveSession();
-            await fetchAllStaticData(); // جلب البيانات للمستخدم
-            showPage(mainDashboard);
-            renderMainDashboard();
-        } else {
-            showLoginErrorModal('error', 'userNotFound');
-        }
-    } catch (error) {
-        console.error("Login error:", error);
-        showLoginErrorModal('error', 'error');
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
-
-/**
- * يسجل خروج المستخدم ويمسح الجلسة.
- */
-const logout = () => {
-    clearSession();
-    loggedInUser = null;
-    showPage(loginPage);
-    // مسح حقول الـ PIN
-    pinInputFields.forEach(input => input.value = '');
-    if (pinInputFields.length > 0) {
-        pinInputFields[0].focus(); // التركيز على أول حقل
-    }
-    // تدمير الرسم البياني عند تسجيل الخروج
-    if (taskChart) {
-        taskChart.destroy();
-        taskChart = null;
-    }
-    // مسح البيانات المخزنة مؤقتًا
-    allAccounts = [];
-    allTaskDefinitions = [];
-    allUsers = [];
-    allWorkRecords = [];
-    allEmployeeRates = [];
-};
-
-// 8. منطق لوحة التحكم الرئيسية
-/**
- * يحسب إجمالي ساعات العمل والرصيد المستحق للمستخدم.
- * @param {string} userId - معرف المستخدم.
- * @returns {Promise<{totalHours: number, totalBalance: number}>}
- */
-const calculateUserTotals = async (userId) => {
-    let totalHours = 0;
-    let totalBalance = 0;
-
-    // استخدام allWorkRecords المحدثة من onSnapshot
-    const userRecords = allWorkRecords.filter(record => record.userId === userId);
-
-    userRecords.forEach(record => {
-        totalHours += record.totalTimeMinutes / 60; // تحويل الدقائق إلى ساعات
-        const account = allAccounts.find(acc => acc.id === record.accountId);
-        if (account) {
-            // البحث عن سعر مخصص لهذا المستخدم والحساب
-            const customRate = allEmployeeRates.find(rate =>
-                rate.employeeId === userId && rate.accountId === account.id
-            );
-            const pricePerHour = customRate ? parseFloat(customRate.customPrice) : parseFloat(account.defaultPrice);
-            if (!isNaN(pricePerHour)) {
-                totalBalance += (record.totalTimeMinutes / 60) * pricePerHour;
-            }
-        }
-    });
-
-    return { totalHours, totalBalance };
-};
-
-/**
- * يعرض لوحة التحكم الرئيسية للمستخدم.
- */
-const renderMainDashboard = async () => {
-    if (!loggedInUser) {
-        showPage(loginPage);
-        return;
-    }
-
-    userNameDisplay.textContent = loggedInUser.name;
-
-    const { totalHours, totalBalance } = await calculateUserTotals(loggedInUser.id);
-    totalHoursDisplay.textContent = formatNumberToEnglish(totalHours.toFixed(2));
-    totalBalanceDisplay.textContent = formatNumberToEnglish(totalBalance.toFixed(2));
-
-    // إضافة زر لوحة تحكم المدير إذا كان المستخدم مسؤولاً
-    if (loggedInUser.role === 'admin' && !adminPanelOptionBtn) {
-        adminPanelOptionBtn = document.createElement('button');
-        adminPanelOptionBtn.id = 'adminPanelOption';
-        adminPanelOptionBtn.className = 'big-option-btn';
-        adminPanelOptionBtn.setAttribute('data-key', 'adminPanelOption');
-        adminPanelOptionBtn.textContent = getTranslatedText('adminPanelOption');
-        adminPanelOptionBtn.style.backgroundColor = 'var(--accent-color)'; // لون مميز
-        adminPanelOptionBtn.addEventListener('click', () => {
-            showPage(adminPanelPage);
-            renderAdminPanel();
+        // Populate dropdowns from cached data
+        accountSelect.innerHTML = `<option value="">${getTranslatedText('accountName')}</option>`;
+        allAccounts.forEach(account => {
+            const option = document.createElement('option');
+            option.value = account.id;
+            option.textContent = account.name;
+            accountSelect.appendChild(option);
         });
-        document.querySelector('.dashboard-options').appendChild(adminPanelOptionBtn);
-    } else if (loggedInUser.role !== 'admin' && adminPanelOptionBtn) {
-        adminPanelOptionBtn.remove();
-        adminPanelOptionBtn = null;
+
+        taskTypeSelect.innerHTML = `<option value="">${getTranslatedText('taskType')}</option>`;
+        allTaskDefinitions.forEach(task => {
+            const option = document.createElement('option');
+            option.value = task.id;
+            option.textContent = task.name;
+            taskTypeSelect.appendChild(option);
+        });
+    } catch (error) {
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     }
 };
 
-// 9. منطق صفحة بدء العمل
-/**
- * يملأ قوائم الحسابات والمهام المنسدلة.
- */
-const fetchAccountsAndTasks = () => {
-    // ملء قائمة الحسابات
-    accountSelect.innerHTML = '<option value="">' + getTranslatedText('chooseTask') + '</option>';
-    allAccounts.forEach(account => {
-        const option = document.createElement('option');
-        option.value = account.id;
-        option.textContent = account.name;
-        accountSelect.appendChild(option);
-    });
-
-    // ملء قائمة المهام
-    taskTypeSelect.innerHTML = '<option value="">' + getTranslatedText('chooseTask') + '</option>';
-    allTaskDefinitions.forEach(task => {
-        const option = document.createElement('option');
-        option.value = task.id;
-        option.textContent = task.name;
-        taskTypeSelect.appendChild(option);
-    });
+const initializeStartWorkPage = async () => {
+    currentSessionTasks = [];
+    completedTasksCount.textContent = formatNumberToEnglish(0);
+    recordedTotalTime.textContent = formatNumberToEnglish('00:00'); // Initial display formatted
+    detailedSummaryContainer.innerHTML = ''; // Clear detailed summary
+    taskTimingButtonsContainer.innerHTML = '';
+    selectedAccount = null;
+    selectedTaskDefinition = null;
+    taskDetailsContainer.style.display = 'none'; // Hide details until confirmed
+    taskSelectionPopup.style.display = 'flex'; // Show popup for selection (using flex)
+    accountSelect.value = "";
+    taskTypeSelect.value = "";
+    lastClickTime = null; // Reset last click time for new session
+    await fetchAccountsAndTasks(); // This now uses cached data
 };
 
-/**
- * يتعامل مع تأكيد اختيار الحساب والمهمة.
- */
 const handleConfirmSelection = () => {
     const accountId = accountSelect.value;
     const taskDefinitionId = taskTypeSelect.value;
 
     if (!accountId || !taskDefinitionId) {
-        showToastMessage(getTranslatedText('fillAllFields'), 'error');
+        showToastMessage(getTranslatedText('selectAccountTask'), 'error');
         return;
     }
 
@@ -942,952 +1091,1184 @@ const handleConfirmSelection = () => {
 
     if (selectedAccount && selectedTaskDefinition) {
         taskSelectionPopup.style.display = 'none';
-        taskDetailsContainer.style.display = 'flex';
-        currentSessionTasks = []; // إعادة تعيين المهام للجلسة الجديدة
-        updateWorkSummary();
+        taskDetailsContainer.style.display = 'block'; // Show details container
         renderTaskTimingButtons();
+        updateWorkSummary(); // Initialize summary display
     } else {
-        showToastMessage(getTranslatedText('error'), 'error');
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     }
 };
 
-/**
- * يعرض أزرار توقيت المهمة بناءً على تعريف المهمة المحددة.
- */
-const renderTaskTimingButtons = () => {
-    taskTimingButtonsContainer.innerHTML = ''; // مسح الأزرار القديمة
+// Event listener for the new "Back" button in the task selection popup
+backToDashboardFromPopup.addEventListener('click', () => {
+    showConfirmationModal(getTranslatedText('unsavedTasksWarning'), () => {
+        currentSessionTasks = []; // Clear tasks if user goes back without saving
+        showPage(mainDashboard);
+    }, () => {
+        // Do nothing if cancelled
+    });
+});
 
-    if (selectedTaskDefinition && selectedTaskDefinition.timings) {
-        selectedTaskDefinition.timings.forEach(timing => {
-            const timingButtonWrapper = document.createElement('div');
-            timingButtonWrapper.className = 'timing-button-wrapper';
+const renderTaskTimingButtons = () => {
+    taskTimingButtonsContainer.innerHTML = '';
+    if (selectedTaskDefinition && selectedTaskDefinition.timings && selectedTaskDefinition.timings.length > 0) {
+        selectedTaskDefinition.timings.forEach((timingValue) => {
+            const wrapper = document.createElement('div');
+            wrapper.classList.add('timing-button-wrapper');
+            // Ensure wrapper has relative positioning for absolute child
+            wrapper.style.position = 'relative'; 
 
             const button = document.createElement('button');
-            button.className = 'task-timing-btn';
-            button.textContent = formatMinutesToMMSS(timing.minutes);
-            button.dataset.minutes = timing.minutes;
-            button.dataset.seconds = timing.seconds;
-            button.addEventListener('click', (event) => recordTask(timing.minutes, timing.seconds, event)); // تمرير الحدث
-            
+            button.classList.add('task-timing-btn');
+            button.textContent = formatNumberToEnglish(formatMinutesToMMSS(timingValue)); // Use formatted time with English digits
+            button.dataset.timing = timingValue;
+
+            // Create a small message div for time between clicks
+            const timeMessageDiv = document.createElement('div');
+            timeMessageDiv.classList.add('time-since-last-click');
+            timeMessageDiv.style.display = 'none'; // Initially hidden
+            wrapper.appendChild(timeMessageDiv);
+
+            button.addEventListener('click', () => {
+                const now = Date.now();
+                if (lastClickTime) {
+                    const diffMs = now - lastClickTime;
+                    const diffSeconds = Math.floor(diffMs / 1000);
+                    const minutes = Math.floor(diffSeconds / 60);
+                    const seconds = diffSeconds % 60;
+                    timeMessageDiv.textContent = getTranslatedText('timeSinceLastClick', {
+                        minutes: formatNumberToEnglish(minutes),
+                        seconds: formatNumberToEnglish(seconds)
+                    });
+                    timeMessageDiv.style.display = 'block';
+                    timeMessageDiv.classList.add('show'); // Add show class to trigger transition
+                    // Hide message after 3 seconds
+                    setTimeout(() => {
+                        timeMessageDiv.classList.remove('show');
+                        timeMessageDiv.addEventListener('transitionend', function handler() {
+                            timeMessageDiv.style.display = 'none';
+                            timeMessageDiv.removeEventListener('transitionend', handler);
+                        }, { once: true });
+                    }, 3000);
+                }
+                lastClickTime = now; // Update last click time
+
+                currentSessionTasks.push({
+                    accountId: selectedAccount.id,
+                    accountName: selectedAccount.name,
+                    taskId: selectedTaskDefinition.id,
+                    taskName: selectedTaskDefinition.name,
+                    timing: parseFloat(timingValue),
+                    timestamp: Date.now() // Use client-side timestamp for session
+                });
+                updateWorkSummary();
+                // Show undo button for this specific timing
+                wrapper.querySelector('.undo-btn').classList.add('show');
+            });
+            wrapper.appendChild(button);
 
             const undoButton = document.createElement('button');
-            undoButton.className = 'undo-btn';
-            undoButton.textContent = getTranslatedText('undo');
-            undoButton.style.display = 'none'; // مخفي افتراضيًا
-            undoButton.addEventListener('click', (e) => {
-                e.stopPropagation(); // منع تشغيل حدث الزر الرئيسي
-                undoLastTask(timing.minutes, timing.seconds, e); // تمرير الحدث
+            undoButton.classList.add('undo-btn');
+            undoButton.textContent = getTranslatedText('undoLastAdd');
+            // Initially hidden by CSS classes, will be shown with .show class
+            undoButton.addEventListener('click', () => {
+                // Find and remove the last added task of this specific timing
+                const indexToRemove = currentSessionTasks.map(task => task.timing).lastIndexOf(parseFloat(timingValue));
+                if (indexToRemove > -1) {
+                    currentSessionTasks.splice(indexToRemove, 1); // Remove only one instance
+                    updateWorkSummary();
+                }
+                // Hide undo button if no more tasks of this timing exist
+                const countOfThisTiming = currentSessionTasks.filter(task => task.timing === parseFloat(timingValue)).length;
+                if (countOfThisTiming === 0) {
+                    undoButton.classList.remove('show');
+                }
             });
+            wrapper.appendChild(undoButton);
+            taskTimingButtonsContainer.appendChild(wrapper);
+        });
+    } else {
+         taskTimingButtonsContainer.innerHTML = `<p style="text-align: center; color: #888;">${getTranslatedText('noDataToShow')}</p>`;
+    }
+};
 
-            const timeSinceLastClickSpan = document.createElement('span');
-            timeSinceLastClickSpan.className = 'time-since-last-click';
-            timeSinceLastClickSpan.style.display = 'none'; // مخفي افتراضيًا
+const updateWorkSummary = () => {
+    let totalCount = 0;
+    let totalTime = 0;
+    
+    // Group tasks by timing for detailed summary
+    const timingSummary = {};
+    
+    currentSessionTasks.forEach(task => {
+        // Use total seconds (multiplied by 1000 for precision) as the key for grouping to avoid floating point issues
+        const timingKey = Math.round(task.timing * 1000).toString(); 
+        if (!timingSummary[timingKey]) {
+            timingSummary[timingKey] = { count: 0, totalTime: 0 }; // totalTime here will be in minutes
+        }
+        timingSummary[timingKey].count++;
+        timingSummary[timingKey].totalTime += task.timing;
+        totalCount++; // Global count
+        totalTime += task.timing; // Global total time
+    });
 
-            timingButtonWrapper.appendChild(button);
-            timingButtonWrapper.appendChild(undoButton);
-            timingButtonWrapper.appendChild(timeSinceLastClickSpan);
-            taskTimingButtonsContainer.appendChild(timingButtonWrapper);
+    completedTasksCount.textContent = formatNumberToEnglish(totalCount);
+    recordedTotalTime.textContent = formatNumberToEnglish(formatMinutesToMMSS(totalTime)); // Use formatted time
+
+    detailedSummaryContainer.innerHTML = ''; // Clear previous content
+
+    // Display detailed summary for each timing
+    if (Object.keys(timingSummary).length > 0) {
+        const heading = document.createElement('h3');
+        heading.textContent = getTranslatedText('taskDetailsByTiming');
+        detailedSummaryContainer.appendChild(heading);
+        
+        // Sort timings for consistent display (convert key back to number for sorting)
+        const sortedTimings = Object.keys(timingSummary).sort((a, b) => parseFloat(a) - parseFloat(b));
+
+        sortedTimings.forEach(timingKey => { // Renamed to timingKey to avoid confusion
+            const summary = timingSummary[timingKey];
+            const p = document.createElement('p');
+            // Convert timingKey back to decimal minutes for display
+            const displayTimingMinutes = parseFloat(timingKey) / 1000; 
+            p.textContent = getTranslatedText('tasksTiming', {
+                timing: formatNumberToEnglish(formatMinutesToMMSS(displayTimingMinutes)), // Use formatted time
+                count: formatNumberToEnglish(summary.count),
+                totalTime: formatNumberToEnglish(formatMinutesToMMSS(summary.totalTime)) // Use formatted time
+            });
+            detailedSummaryContainer.appendChild(p);
         });
     }
+    updateSaveButtonState(); // Update save button state
 };
 
-/**
- * يسجل مهمة جديدة.
- * @param {number} minutes - الدقائق المسجلة للمهمة.
- * @param {number} seconds - الثواني المسجلة للمهمة.
- * @param {Event} event - كائن الحدث من النقر.
- */
-const recordTask = (minutes, seconds, event) => {
-    const now = Date.now();
-    const totalMinutes = minutes + (seconds / 60);
-
-    // تحديث وقت آخر نقرة وعرضه
-    if (lastClickTime !== 0) {
-        const timeDiffSeconds = Math.floor((now - lastClickTime) / 1000);
-        const minutesSinceLastClick = Math.floor(timeDiffSeconds / 60);
-        const secondsSinceLastClick = timeDiffSeconds % 60;
-        const timeFormatted = `${minutesSinceLastClick.toString().padStart(2, '0')}:${secondsSinceLastClick.toString().padStart(2, '0')}`;
-
-        // البحث عن زر التوقيت الذي تم النقر عليه لتحديث الوقت منذ آخر نقرة
-        const clickedButton = event.target;
-        // العنصر التالي هو زر التراجع، العنصر الذي يليه هو span الوقت
-        const timeSinceSpan = clickedButton.nextElementSibling.nextElementSibling; 
-        if (timeSinceSpan) {
-            timeSinceSpan.textContent = `${getTranslatedText('lastClickTime')} ${timeFormatted}`;
-            timeSinceSpan.classList.add('show');
-            setTimeout(() => timeSinceSpan.classList.remove('show'), 3000); // إخفاء بعد 3 ثوانٍ
-        }
-    }
-    lastClickTime = now;
-
-    currentSessionTasks.push({
-        accountId: selectedAccount.id,
-        accountName: selectedAccount.name,
-        taskDefinitionId: selectedTaskDefinition.id,
-        taskName: selectedTaskDefinition.name,
-        timingMinutes: totalMinutes,
-        timestamp: Timestamp.now()
-    });
-    updateWorkSummary();
-    // إظهار زر التراجع
-    const clickedButton = event.target;
-    const undoButton = clickedButton.nextElementSibling; // زر التراجع هو العنصر التالي
-    if (undoButton) {
-        undoButton.classList.add('show');
-        undoButton.style.display = 'block'; // Ensure it's visible
-    }
-};
-
-/**
- * يتراجع عن آخر مهمة مسجلة من النوع المحدد.
- * @param {number} minutes - الدقائق الأصلية للمهمة.
- * @param {number} seconds - الثواني الأصلية للمهمة.
- * @param {Event} event - كائن الحدث من النقر.
- */
-const undoLastTask = (minutes, seconds, event) => {
-    const totalMinutesToUndo = minutes + (seconds / 60);
-    const indexToRemove = currentSessionTasks.findIndex(task =>
-        task.accountId === selectedAccount.id &&
-        task.taskDefinitionId === selectedTaskDefinition.id &&
-        task.timingMinutes === totalMinutesToUndo
-    );
-
-    if (indexToRemove !== -1) {
-        currentSessionTasks.splice(indexToRemove, 1);
-        updateWorkSummary();
-        // إخفاء زر التراجع إذا لم يعد هناك مهام من هذا النوع
-        const clickedButton = event.target; // زر التراجع الذي تم النقر عليه
-        const buttonWrapper = clickedButton.closest('.timing-button-wrapper');
-        const timingValue = parseFloat(buttonWrapper.querySelector('.task-timing-btn').dataset.minutes) +
-                             (parseFloat(buttonWrapper.querySelector('.task-timing-btn').dataset.seconds) / 60);
-
-        const hasMoreOfThisTask = currentSessionTasks.some(task =>
-            task.accountId === selectedAccount.id &&
-            task.taskDefinitionId === selectedTaskDefinition.id &&
-            task.timingMinutes === timingValue
-        );
-
-        if (!hasMoreOfThisTask) {
-            clickedButton.classList.remove('show');
-            clickedButton.style.display = 'none'; // Hide it completely
-        }
-    }
-};
-
-/**
- * يحدث ملخص العمل (عدد المهام والوقت الإجمالي).
- */
-const updateWorkSummary = () => {
-    let totalTasks = 0;
-    let totalTime = 0;
-    const detailedSummary = {};
-
-    currentSessionTasks.forEach(task => {
-        totalTasks++;
-        totalTime += task.timingMinutes;
-
-        const key = `${task.accountName} - ${task.taskName} (${formatMinutesToMMSS(task.timingMinutes)})`;
-        detailedSummary[key] = (detailedSummary[key] || 0) + 1;
-    });
-
-    completedTasksCountDisplay.textContent = formatNumberToEnglish(totalTasks);
-    recordedTotalTimeDisplay.textContent = formatTotalMinutesToHHMMSS(totalTime);
-
-    // عرض الملخص التفصيلي
-    detailedSummaryContainer.innerHTML = '<h3>' + getTranslatedText('detailedSummary') + '</h3>';
-    if (Object.keys(detailedSummary).length === 0) {
-        detailedSummaryContainer.innerHTML += '<p>' + getTranslatedText('noTasksRecorded') + '</p>';
+const updateSaveButtonState = () => {
+    saveWorkBtn.disabled = currentSessionTasks.length === 0;
+    if (currentSessionTasks.length === 0) {
+        saveWorkBtn.classList.add('disabled');
     } else {
-        for (const [taskKey, count] of Object.entries(detailedSummary)) {
-            detailedSummaryContainer.innerHTML += `<p>${taskKey}: ${formatNumberToEnglish(count)} ${getTranslatedText('tasks')}</p>`;
-        }
+        saveWorkBtn.classList.remove('disabled');
     }
-    updateSaveButtonState(); // تحديث حالة زر الحفظ
 };
 
-/**
- * يحفظ سجلات العمل الحالية إلى Firestore.
- */
-const saveWorkRecord = async () => {
+const saveWorkRecord = async () => { // Renamed for clarity
     if (currentSessionTasks.length === 0) {
         showToastMessage(getTranslatedText('noTasksToSave'), 'error');
         return;
     }
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot save work record.");
-        return;
-    }
 
-    showLoadingIndicator(true);
-    isSavingWork = true; // تعيين العلامة لمنع تحذير beforeunload
-    try {
-        // تجميع المهام حسب الحساب، المهمة، والتوقيت
-        const groupedTasks = currentSessionTasks.reduce((acc, task) => {
-            const key = `${task.accountId}-${task.taskDefinitionId}-${task.timingMinutes}`;
-            if (!acc[key]) {
-                acc[key] = {
-                    userId: loggedInUser.id,
-                    userName: loggedInUser.name,
-                    accountId: task.accountId,
-                    accountName: selectedAccount.name, // استخدم selectedAccount.name
-                    taskDefinitionId: task.taskDefinitionId,
-                    taskName: selectedTaskDefinition.name, // استخدم selectedTaskDefinition.name
-                    timingMinutes: task.timingMinutes,
-                    totalTasksCount: 0,
-                    totalTimeMinutes: 0,
-                    timestamp: Timestamp.now()
-                };
-            }
-            acc[key].totalTasksCount++;
-            acc[key].totalTimeMinutes += task.timingMinutes;
-            return acc;
-        }, {});
+    showConfirmationModal(getTranslatedText('confirmSave'), async () => {
+        isSavingWork = true; // Set flag to true before saving
+        showLoadingIndicator(true);
+        saveWorkBtn.disabled = true;
+        saveWorkBtn.textContent = getTranslatedText('saving');
 
-        // حفظ كل مجموعة كسجل منفصل
-        for (const key in groupedTasks) {
-            await addDoc(collection(db, `artifacts/${appId}/public/data/workRecords`), groupedTasks[key]);
+        try {
+            const recordData = {
+                userId: loggedInUser.id,
+                userName: loggedInUser.name,
+                accountId: selectedAccount.id,
+                accountName: selectedAccount.name,
+                taskDefinitionId: selectedTaskDefinition.id,
+                taskDefinitionName: selectedTaskDefinition.name,
+                recordedTimings: currentSessionTasks.map(t => ({
+                    timing: t.timing,
+                    timestamp: t.timestamp
+                })),
+                totalTasksCount: currentSessionTasks.length, // Total count of tasks in this record
+                totalTime: currentSessionTasks.reduce((sum, task) => sum + task.timing, 0), // Total time for this record
+                timestamp: serverTimestamp() // Use client-side timestamp for session
+            };
+
+            await addDoc(collection(db, 'workRecords'), recordData);
+            showToastMessage(getTranslatedText('workSavedSuccess'), 'success');
+            currentSessionTasks = [];
+            isSavingWork = false; // Reset flag
+            showPage(mainDashboard);
+            await renderMainDashboard();
         }
-
-        currentSessionTasks = []; // مسح المهام بعد الحفظ
-        lastClickTime = 0; // إعادة تعيين وقت آخر نقرة
-        updateWorkSummary(); // تحديث الملخص
-        showToastMessage(getTranslatedText('recordAdded'), 'success');
-        showPage(mainDashboard); // العودة للوحة التحكم الرئيسية
-    } catch (error) {
-        console.error("Error saving work record:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
-    } finally {
-        showLoadingIndicator(false);
-        isSavingWork = false; // إعادة تعيين العلامة
-    }
+        catch (error) {
+            showToastMessage(getTranslatedText('errorSavingWork'), 'error');
+        } finally {
+            showLoadingIndicator(false);
+            saveWorkBtn.disabled = false;
+            saveWorkBtn.textContent = getTranslatedText('saveWorkBtn');
+        }
+    });
 };
 
-const updateSaveButtonState = () => {
-    if (saveWorkBtn) {
-        saveWorkBtn.disabled = currentSessionTasks.length === 0;
-        if (currentSessionTasks.length === 0) {
-            saveWorkBtn.classList.add('disabled');
-        } else {
-            saveWorkBtn.classList.remove('disabled');
-        }
+// Back button from Start Work Page
+backToDashboardFromStartWork.addEventListener('click', () => {
+    if (currentSessionTasks.length > 0) {
+        showConfirmationModal(getTranslatedText('unsavedTasksWarning'), () => {
+            currentSessionTasks = []; // Clear tasks if user abandons it
+            showPage(mainDashboard);
+        }, () => {
+            // Do nothing if cancelled
+        });
+    } else {
+        showPage(mainDashboard);
     }
-};
+});
 
-// 10. منطق صفحة متابعة العمل
-/**
- * يعرض صفحة متابعة العمل مع جدول سجلات العمل والرسم البياني.
- * @param {Object} user - كائن المستخدم الحالي.
- */
-const renderTrackWorkPage = async (user) => {
-    if (!user) {
+// 8. Track Work Page Logic
+const renderTrackWorkPage = async () => {
+    if (!loggedInUser || loggedInUser.id === 'admin') {
         showPage(loginPage);
         return;
     }
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot render track work page.");
-        return;
-    }
-
+    trackTasksTableBody.innerHTML = '';
+    trackTasksTableFoot.innerHTML = ''; // Clear footer
     showLoadingIndicator(true);
     try {
-        const userRecordsCollectionRef = collection(db, `artifacts/${appId}/public/data/workRecords`);
-        const q = query(userRecordsCollectionRef, where("userId", "==", user.id)); // إزالة orderBy لتجنب الأخطاء المحتملة
-        const querySnapshot = await getDocs(q);
-        const records = querySnapshot.docs.map(getDocData);
+        const userId = loggedInUser.id;
+        const workRecordsCollectionRef = collection(db, 'workRecords'); 
+        const recordsQueryRef = query(workRecordsCollectionRef, where('userId', '==', userId), orderBy('timestamp', 'desc')); 
+        const recordsSnapshot = await getDocs(recordsQueryRef); 
 
-        // فرز السجلات في الذاكرة بعد جلبها
-        records.sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
-
-
-        if (records.length === 0) {
-            if (trackTasksTableBody) trackTasksTableBody.innerHTML = `<tr><td colspan="10">${getTranslatedText('noDataAvailable')}</td></tr>`;
-            if (trackTasksTableFoot) trackTasksTableFoot.innerHTML = '';
+        if (recordsSnapshot.empty) {
+            const row = trackTasksTableBody.insertRow();
+            const cell = row.insertCell(0);
+            cell.colSpan = 10; // Total columns in the table
+            cell.textContent = getTranslatedText('noDataToShow');
+            cell.style.textAlign = 'center';
+            showLoadingIndicator(false);
+            // Destroy chart if no data
             if (taskChart) {
                 taskChart.destroy();
                 taskChart = null;
             }
-            showLoadingIndicator(false);
             return;
         }
 
-        // تجميع البيانات للرسم البياني
-        const chartData = {};
-        records.forEach(record => {
-            chartData[record.taskName] = (chartData[record.taskName] || 0) + record.totalTimeMinutes;
+        // Data processing for the complex table
+        const processedData = {};
+        let grandTotalTasks = 0;
+        let grandTotalTime = 0;
+        let chartDataForUser = {}; // For the chart on this page
+
+        // Fetch all accounts to get default prices (using cached data)
+        const accountsMap = new Map(allAccounts.map(acc => [acc.id, acc]));
+
+        // Fetch custom rates for the logged-in user
+        const userAccountRatesCol = collection(db, 'userAccountRates');
+        const userRatesQuery = query(userAccountRatesCol, where('userId', '==', userId));
+        const userRatesSnapshot = await getDocs(userRatesQuery);
+        const userCustomRatesMap = new Map(); // Map<accountId, customPricePerHour>
+        userRatesSnapshot.forEach(docSnap => {
+            const rate = getDocData(docSnap);
+            userCustomRatesMap.set(rate.accountId, rate.customPricePerHour);
         });
 
-        generateChart(chartData);
-        renderTrackTasksTable(records);
 
-    } catch (error) {
-        console.error("Error loading track work data:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
+        recordsSnapshot.forEach(documentSnapshot => { 
+            const record = documentSnapshot.data();
+            // Ensure timestamp is a Date object before formatting
+            const recordDateObj = record.timestamp ? new Date(record.timestamp.toDate()) : new Date();
+            const recordDate = recordDateObj.toLocaleDateString('en-CA'); // ISO 8601 format (YYYY-MM-DD) for consistent grouping
 
-/**
- * ينشئ أو يحدث الرسم البياني الدائري.
- * @param {Object} data - كائن يحتوي على أسماء المهام وإجمالي الدقائق.
- */
-const generateChart = (data) => {
-    if (!taskChartCanvas) {
-        console.warn("Canvas element for chart not found.");
-        return;
-    }
-    if (taskChart) {
-        taskChart.destroy(); // تدمير الرسم البياني القديم قبل إنشاء الجديد
-    }
+            if (!processedData[recordDate]) {
+                processedData[recordDate] = { accounts: {}, dateTotalTasks: 0, dateTotalTime: 0, dateTotalBalance: 0, totalRows: 0 };
+            }
+            if (!processedData[recordDate].accounts[record.accountId]) {
+                processedData[recordDate].accounts[record.accountId] = { name: record.accountName, tasks: {}, accountTotalTasks: 0, accountTotalTime: 0, accountTotalBalance: 0, totalRows: 0 };
+            }
+            // Group by taskDefinitionId, but also include the specific record's time for display
+            // Use documentSnapshot.id for a truly unique key for each record to avoid merging different records of the same task type
+            const taskRecordKey = documentSnapshot.id; 
+            if (!processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey]) {
+                processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey] = {
+                    name: record.taskDefinitionName,
+                    timings: {},
+                    taskTotalTasks: 0,
+                    taskTotalTime: 0,
+                    taskTotalBalance: 0,
+                    totalRows: 0 // To calculate rowspan for the task
+                };
+            }
 
-    const labels = Object.keys(data);
-    const values = Object.values(data);
+            record.recordedTimings.forEach(rt => {
+                // Use total seconds (multiplied by 1000 for precision) as the key for grouping to avoid floating point issues
+                const timingKey = Math.round(rt.timing * 1000).toString(); 
+                if (!processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey]) {
+                    processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey] = { count: 0, totalTime: 0 };
+                }
+                processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey].count++;
+                processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey].totalTime += rt.timing;
 
-    // ألوان ديناميكية
-    const backgroundColors = labels.map((_, i) => {
-        const hue = (i * 137) % 360; // توزيع الألوان بشكل متساوٍ
-        return `hsl(${hue}, 70%, 60%)`;
-    });
-    const borderColors = backgroundColors.map(color => {
-        // جعل الحدود أغمق قليلاً
-        const hsl = color.match(/\d+/g).map(Number);
-        return `hsl(${hsl[0]}, ${hsl[1]}%, ${hsl[2] * 0.8}%)`;
-    });
+                // Aggregate for chart
+                chartDataForUser[record.taskDefinitionName] = (chartDataForUser[record.taskDefinitionName] || 0) + rt.timing;
+            });
 
-    const ctx = taskChartCanvas.getContext('2d');
-    taskChart = new Chart(ctx, {
-        type: 'pie',
-        data: {
-            labels: labels.map(label => getTranslatedText(label)), // ترجمة تسميات المهام
-            datasets: [{
-                data: values,
-                backgroundColor: backgroundColors,
-                borderColor: borderColors,
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'top',
-                    labels: {
-                        color: document.body.classList.contains('dark-mode') ? '#ecf0f1' : '#34495e', // استخدم ألوان ثابتة لضمان التوافق
-                        font: {
-                            size: 14,
-                            family: 'Segoe UI'
+            // Update totals for the specific record
+            processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].taskTotalTasks += record.totalTasksCount;
+            processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].taskTotalTime += record.totalTime;
+
+            // Calculate balance for this record using applicable price
+            const account = accountsMap.get(record.accountId);
+            let pricePerHour = account ? (account.defaultPricePerHour || 0) : 0;
+            if (userCustomRatesMap.has(record.accountId)) { // Corrected variable name here
+                pricePerHour = userCustomRatesMap.get(record.accountId); // Corrected variable name here
+            }
+            const recordBalance = (record.totalTime / 60) * pricePerHour;
+            processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].taskTotalBalance += recordBalance;
+
+
+            // Update totals for account and date
+            processedData[recordDate].accounts[record.accountId].accountTotalTasks += record.totalTasksCount;
+            processedData[recordDate].accounts[record.accountId].accountTotalTime += record.totalTime;
+            processedData[recordDate].accounts[record.accountId].accountTotalBalance += recordBalance;
+
+            processedData[recordDate].dateTotalTasks += record.totalTasksCount;
+            processedData[recordDate].dateTotalTime += record.totalTime;
+            processedData[recordDate].dateTotalBalance += recordBalance;
+
+            grandTotalTasks += record.totalTasksCount;
+            grandTotalTime += record.totalTime;
+        });
+
+        // Second pass to calculate totalRows for accounts and dates
+        for (const dateKey in processedData) {
+            const dateData = processedData[dateKey];
+            dateData.totalRows = 0;
+            for (const accountId in dateData.accounts) {
+                const accountData = dateData.accounts[accountId];
+                accountData.totalRows = 0;
+                for (const taskRecordKey in accountData.tasks) {
+                    const taskData = accountData.tasks[taskRecordKey];
+                    // Each timing within a task record gets its own row. If no timings, still one row for the task.
+                    const timingsCount = Object.keys(taskData.timings).length;
+                    taskData.totalRows = timingsCount > 0 ? timingsCount : 1;
+                    accountData.totalRows += taskData.totalRows;
+                }
+                dateData.totalRows += accountData.totalRows;
+            }
+        }
+
+
+        // Render Chart
+        if (taskChart) {
+            taskChart.destroy(); // Destroy existing chart before creating a new one
+        }
+
+        const chartLabels = Object.keys(chartDataForUser);
+        const chartDataValues = Object.values(chartDataForUser);
+
+        const isDarkMode = document.body.classList.contains('dark-mode');
+        const legendTextColor = isDarkMode ? '#BDC3C7' : '#333'; // Light gray in dark, dark gray in light
+        const titleTextColor = isDarkMode ? '#76D7C4' : '#2c3e50'; // Soft teal in dark, dark blue/gray in light
+
+        taskChart = new Chart(taskChartCanvas, {
+            type: 'doughnut',
+            data: {
+                labels: chartLabels,
+                datasets: [{
+                    data: chartDataValues,
+                    backgroundColor: [
+                        '#3498DB', '#2ECC71', '#F39C12', '#E74C3C', '#9B59B6', '#1ABC9C', '#D35400', '#C0392B', '#2C3E50', '#7F8C8D' // Updated color palette
+                    ],
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false, // Allow chart to resize freely
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            color: legendTextColor // Adjust legend text color for dark mode
                         },
-                        generateLabels: function(chart) {
-                            const data = chart.data;
-                            if (data.labels.length && data.datasets.length) {
-                                return data.labels.map(function(label, i) {
-                                    const meta = chart.getDatasetMeta(0);
-                                    // Corrected: Use meta.data[i]._model for Chart.js v2.x
-                                    const style = meta.data[i].options; // Corrected for Chart.js v3+
-                                    return {
-                                        text: label,
-                                        fillStyle: style.backgroundColor,
-                                        strokeStyle: style.borderColor,
-                                        lineWidth: style.borderWidth,
-                                        hidden: isNaN(data.datasets[0].data[i]) || meta.data[i].hidden,
-                                        index: i
-                                    };
-                                });
-                            }
-                            return [];
-                        }
+                        rtl: (currentLanguage === 'ar') // Set RTL for legend
+                    },
+                    title: {
+                        display: true,
+                        text: getTranslatedText('totalTimeRecorded'), // Use translated title
+                        color: titleTextColor // Adjust title text color for dark mode
+                    },
+                    tooltip: {
+                        rtl: (currentLanguage === 'ar') // Set RTL for tooltips
                     }
                 },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            let label = context.label || '';
-                            if (label) {
-                                label += ': ';
-                            }
-                            if (context.parsed !== null) {
-                                label += formatNumberToEnglish(context.parsed.toFixed(2)) + ' ' + getTranslatedText('minutesPlaceholder');
-                            }
-                            return label;
+                animation: {
+                    animateScale: true,
+                    animateRotate: true
+                }
+            }
+        });
+
+
+        // Render Table
+        let serialCounter = 1;
+        const sortedDates = Object.keys(processedData).sort((a, b) => new Date(b) - new Date(a)); // Sort dates descending
+
+        for (const dateKey of sortedDates) {
+            const dateData = processedData[dateKey];
+            const sortedAccountIds = Object.keys(dateData.accounts).sort((a, b) => {
+                const nameA = dateData.accounts[a].name;
+                const nameB = dateData.accounts[b].name;
+                return nameA.localeCompare(nameB, currentLanguage);
+            }); // Sort accounts alphabetically
+
+            let dateRowSpanHandled = false; // Flag to ensure date/daily total cell is added only once per date group
+
+            for (const accountId of sortedAccountIds) {
+                const accountData = dateData.accounts[accountId];
+                const sortedTaskRecordKeys = Object.keys(accountData.tasks).sort((a, b) => {
+                    const taskA = accountData.tasks[a];
+                    const taskB = accountData.tasks[b];
+                    // Sort by task name first, then by total time (descending)
+                    if (taskA.name !== taskB.name) {
+                        return taskA.name.localeCompare(taskB.name, currentLanguage);
+                    }
+                    return taskB.taskTotalTime - taskA.taskTotalTime;
+                });
+                let accountRowSpanHandled = false; // Flag to ensure account name and total for account cells are added only once per account group
+
+                for (const taskRecordKey of sortedTaskRecordKeys) {
+                    const taskData = accountData.tasks[taskRecordKey];
+                    // Sort timings by their numerical value (after converting key back to number)
+                    const sortedTimings = Object.keys(taskData.timings).sort((a, b) => parseFloat(a) - parseFloat(b));
+                    const timingsCount = sortedTimings.length;
+                    const actualTaskRows = timingsCount > 0 ? timingsCount : 1; // At least one row for task
+
+                    let taskRowSpanHandled = false; // Flag to ensure task name and total for task cells are added only once per task record
+
+                    for (let i = 0; i < actualTaskRows; i++) {
+                        const row = trackTasksTableBody.insertRow();
+                        // Add a class to the row for styling the border
+                        row.classList.add('daily-record-row');
+
+                        // Column 1: Serial Number (per account)
+                        if (!accountRowSpanHandled) {
+                            const cell = row.insertCell();
+                            cell.textContent = formatNumberToEnglish(serialCounter++); // Increment serial per account
+                            cell.rowSpan = accountData.totalRows;
+                            cell.classList.add('total-cell');
+                        }
+
+                        // Column 2: Date (per date)
+                        if (!dateRowSpanHandled) {
+                            const cell = row.insertCell();
+                            // Ensure date is formatted without time and stays on one line
+                            cell.textContent = new Date(dateKey).toLocaleDateString(currentLanguage, { day: 'numeric', month: 'short' }); // Format as "1 May"
+                            cell.rowSpan = dateData.totalRows;
+                            cell.classList.add('total-cell', 'date-cell'); // Add date-cell class
+                        }
+
+                        // Column 3: Account Name (per account)
+                        if (!accountRowSpanHandled) {
+                            const cell = row.insertCell();
+                            cell.textContent = accountData.name;
+                            cell.rowSpan = accountData.totalRows;
+                            cell.classList.add('total-cell');
+                        }
+
+                        // Column 4: Task Name (per task record)
+                        if (!taskRowSpanHandled) {
+                            const cell = row.insertCell();
+                            cell.textContent = taskData.name;
+                            cell.rowSpan = actualTaskRows;
+                        }
+
+                        // Column 5: Timing Value (per timing)
+                        const timingValueCell = row.insertCell();
+                        const currentTimingKey = sortedTimings[i];
+                        const currentTiming = timingsCount > 0 ? taskData.timings[currentTimingKey] : null;
+                        if (currentTiming) {
+                            // Convert timingKey back to decimal minutes for display
+                            const displayTimingMinutes = parseFloat(currentTimingKey) / 1000;
+                            timingValueCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(displayTimingMinutes));
+                        } else {
+                            timingValueCell.textContent = '00:00';
+                        }
+
+                        // Column 6: Completed Tasks (per timing) - RE-ADDED
+                        const completedTasksCell = row.insertCell();
+                        if (currentTiming) {
+                            completedTasksCell.textContent = formatNumberToEnglish(currentTiming.count);
+                        } else {
+                            completedTasksCell.textContent = formatNumberToEnglish(0);
+                        }
+                        
+                        // Column 7: Total Time (per timing) - Now column 7
+                        const totalTimeCell = row.insertCell(); 
+                        if (currentTiming) {
+                            totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(currentTiming.totalTime));
+                        } else {
+                            totalTimeCell.textContent = formatNumberToEnglish('00:00');
+                        }
+                        
+                        // Add tooltip for tasks summary to the totalTimeCell
+                        const taskSummaryTooltip = Object.keys(taskData.timings)
+                            .map(timingKey => { // Renamed to timingKey
+                                const summary = taskData.timings[timingKey];
+                                // Convert timingKey back to decimal minutes for display in tooltip
+                                const displayTimingMinutes = parseFloat(timingKey) / 1000;
+                                return getTranslatedText('tasksSummaryTooltip', {
+                                    count: formatNumberToEnglish(summary.count),
+                                    time: formatNumberToEnglish(formatMinutesToMMSS(displayTimingMinutes))
+                                });
+                            })
+                            .join('\n'); // Join with newline for multi-line tooltip
+                        totalTimeCell.title = taskSummaryTooltip;
+
+
+                        // Column 8: Total for Task (per task record) - Now column 8
+                        if (!taskRowSpanHandled) {
+                            const cell = row.insertCell();
+                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(taskData.taskTotalTime))} (${formatNumberToEnglish(taskData.taskTotalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')})`;
+                            cell.rowSpan = actualTaskRows;
+                            cell.classList.add('total-cell');
+                        }
+
+                        // Column 9: Total for Account (per account) - Now column 9
+                        if (!accountRowSpanHandled) {
+                            const cell = row.insertCell();
+                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(accountData.accountTotalTime))} (${formatNumberToEnglish(accountData.accountTotalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')})`;
+                            cell.rowSpan = accountData.totalRows;
+                            cell.classList.add('total-cell');
+                        }
+
+                        // Column 10: Daily Total Time (per date) - Now column 10
+                        if (!dateRowSpanHandled) {
+                            const cell = row.insertCell();
+                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(dateData.dateTotalTime))} (${formatNumberToEnglish(dateData.dateTotalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')})`; // Display daily total
+                            cell.rowSpan = dateData.totalRows;
+                            cell.classList.add('total-cell', 'daily-total-cell'); // Add daily-total-cell class
+                        }
+
+                        // Update flags
+                        if (!dateRowSpanHandled) {
+                            dateRowSpanHandled = true;
+                        }
+                        if (!accountRowSpanHandled) {
+                            accountRowSpanHandled = true;
+                        }
+                        if (!taskRowSpanHandled) {
+                            taskRowSpanHandled = true;
                         }
                     }
                 }
             }
         }
-    });
-};
 
-/**
- * يعرض سجلات العمل في جدول صفحة متابعة العمل.
- * @param {Array<Object>} records - مصفوفة من سجلات العمل.
- */
-const renderTrackTasksTable = (records) => {
-    if (!trackTasksTableBody || !trackTasksTableFoot) {
-        console.warn("Table elements for track tasks not found.");
-        return;
-    }
-    trackTasksTableBody.innerHTML = '';
-    trackTasksTableFoot.innerHTML = '';
+        // Render Footer (Grand Totals)
+        const footerRow = trackTasksTableFoot.insertRow();
+        
+        // Grand Total label
+        let cell = footerRow.insertCell();
+        cell.colSpan = 5; // Adjusted colspan to account for re-added column
+        cell.textContent = getTranslatedText('grandTotal');
+        cell.classList.add('grand-total-label');
 
-    if (records.length === 0) {
-        trackTasksTableBody.innerHTML = `<tr><td colspan="10">${getTranslatedText('noDataAvailable')}</td></tr>`;
-        return;
-    }
+        // Total Tasks Overall value (re-added)
+        cell = footerRow.insertCell();
+        cell.textContent = `${getTranslatedText('totalTasksOverall')}: ${formatNumberToEnglish(grandTotalTasks)}`;
+        cell.classList.add('grand-total-value');
 
-    // تجميع البيانات للإجماليات اليومية، وإجماليات الحساب، وإجماليات المهمة
-    const dailyTotals = {}; // { 'YYYY-MM-DD': totalMinutes }
-    const accountTotals = {}; // { 'accountId': totalMinutes }
-    const taskTotals = {}; // { 'taskDefinitionId': totalMinutes }
+        // Total Time Overall value - Now column 7 (colSpan 2)
+        cell = footerRow.insertCell();
+        cell.colSpan = 2; // Span across Total Time, Total for Task
+        cell.textContent = `${getTranslatedText('totalTimeOverall')}: ${formatNumberToEnglish(formatTotalMinutesToHHMMSS(grandTotalTime))}`;
+        cell.classList.add('grand-total-value');
 
-    records.forEach(record => {
-        const recordDate = record.timestamp.toDate().toISOString().split('T')[0];
-        dailyTotals[recordDate] = (dailyTotals[recordDate] || 0) + record.totalTimeMinutes;
-        accountTotals[record.accountId] = (accountTotals[record.accountId] || 0) + record.totalTimeMinutes;
-        taskTotals[record.taskDefinitionId] = (taskTotals[record.taskDefinitionId] || 0) + record.totalTimeMinutes;
-    });
-
-    let serial = 1;
-    let grandTotalMinutes = 0;
-
-    // فرز السجلات حسب التاريخ تنازليًا
-    records.sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
-
-    let currentDate = '';
-    // let currentAccount = ''; // غير مستخدم
-    // let currentTask = ''; // غير مستخدم
-
-    records.forEach(record => {
-        const recordDate = record.timestamp.toDate();
-        const formattedDate = recordDate.toLocaleDateString(currentLanguage === 'ar' ? 'ar-EG' : 'en-US', {
-            year: 'numeric',
-            month: 'numeric',
-            day: 'numeric'
+        // Total Balance Overall - Now column 9 (colSpan 2)
+        cell = footerRow.insertCell();
+        cell.colSpan = 2; // Span across Total for Account, Daily Total Time
+        // Recalculate grand total balance using the logic from main dashboard
+        let grandTotalBalance = 0;
+        recordsSnapshot.forEach(docSnap => {
+            const record = docSnap.data();
+            const account = accountsMap.get(record.accountId);
+            if (account) {
+                let pricePerHour = account.defaultPricePerHour || 0;
+                if (userCustomRatesMap.has(record.accountId)) {
+                    pricePerHour = userCustomRatesMap.get(record.accountId);
+                }
+                grandTotalBalance += (record.totalTime / 60) * pricePerHour;
+            }
         });
-        const formattedTime = recordDate.toLocaleTimeString(currentLanguage === 'ar' ? 'ar-EG' : 'en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false
+        cell.textContent = `${formatNumberToEnglish(grandTotalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')}`;
+        cell.classList.add('grand-total-value');
+
+        // Apply styling to grand total cells
+        Array.from(trackTasksTableFoot.rows).forEach(row => {
+            Array.from(row.cells).forEach(c => {
+                c.style.fontWeight = 'bold';
+                // Use CSS classes for background and border for dark mode compatibility
+                c.classList.add('grand-total-footer-cell'); 
+            });
         });
 
-        const account = allAccounts.find(acc => acc.id === record.accountId);
-        const taskDef = allTaskDefinitions.find(task => task.id === record.taskDefinitionId);
 
-        let rowClass = '';
-        if (formattedDate !== currentDate) {
-            rowClass += 'daily-record-row'; // إضافة فاصل بصري لليوم الجديد
-            currentDate = formattedDate;
-        }
-
-        const row = trackTasksTableBody.insertRow();
-        row.className = rowClass;
-
-        row.innerHTML = `
-            <td>${formatNumberToEnglish(serial++)}</td>
-            <td>${formattedDate} ${formattedTime}</td>
-            <td>${account ? account.name : 'N/A'}</td>
-            <td>${taskDef ? taskDef.name : 'N/A'}</td>
-            <td>${formatNumberToEnglish(record.timingMinutes.toFixed(2))}</td>
-            <td>${formatNumberToEnglish(record.totalTasksCount)}</td>
-            <td>${formatNumberToEnglish(record.totalTimeMinutes.toFixed(2))}</td>
-            <td>${formatNumberToEnglish(taskTotals[record.taskDefinitionId] ? taskTotals[record.taskDefinitionId].toFixed(2) : '0.00')}</td>
-            <td>${formatNumberToEnglish(accountTotals[record.accountId] ? accountTotals[record.accountId].toFixed(2) : '0.00')}</td>
-            <td>${formatNumberToEnglish(dailyTotals[formattedDate] ? dailyTotals[formattedDate].toFixed(2) : '0.00')}</td>
-        `;
-        grandTotalMinutes += record.totalTimeMinutes;
-    });
-
-    // إضافة صف الإجمالي الكلي
-    const footerRow = trackTasksTableFoot.insertRow();
-    footerRow.innerHTML = `
-        <td colspan="6" class="total-cell">${getTranslatedText('grandTotal')}</td>
-        <td class="total-cell">${formatNumberToEnglish(grandTotalMinutes.toFixed(2))}</td>
-        <td colspan="3" class="total-cell"></td>
-    `;
+    } catch (error) {
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
+    } finally {
+        showLoadingIndicator(false);
+    }
 };
 
-// 11. منطق لوحة تحكم المدير
-/**
- * يعرض لوحة تحكم المدير ويقوم بتحميل البيانات.
- */
+// Admin Panel Logic
 const renderAdminPanel = async () => {
-    if (!loggedInUser || loggedInUser.role !== 'admin') {
-        showPage(loginPage); // إعادة التوجيه إلى صفحة تسجيل الدخول إذا لم يكن مسؤولاً
+    if (!loggedInUser || loggedInUser.id !== 'admin') {
+        showPage(loginPage);
+        showToastMessage(getTranslatedText('unauthorizedAccess'), 'error'); // Show unauthorized message
         return;
     }
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot render admin panel.");
-        return;
-    }
-
-    showLoadingIndicator(true);
+    showLoadingIndicator(true); // Start loading indicator for admin panel
     try {
+        // These functions now use cached data
         await loadAndDisplayUsers();
         await loadAndDisplayAccounts();
         await loadAndDisplayTaskDefinitions();
-        populateUserFilter(); // ملء قائمة المستخدمين في فلتر السجلات
-        await loadAndDisplayWorkRecords(null, null); // تحميل جميع السجلات افتراضياً
-        await renderEmployeeRatesAndTotals(); // تحميل وعرض أسعار الموظفين والإجماليات
+        await populateFilters(); // Populate all filter dropdowns
+        // Clear filter fields on load
+        recordFilterDate.value = ''; // Clear date filter
+        recordFilterUser.value = ''; // Clear user filter (sets to "All Users")
+        recordFilterAccount.value = ''; // Clear account filter
+        recordFilterTask.value = ''; // Clear task filter
+        await loadAndDisplayWorkRecords(null, null, null, null); // Load all records initially
+        await renderEmployeeRatesAndTotals(); // New function call
     } catch (error) {
-        console.error("Error rendering admin panel:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     } finally {
         showLoadingIndicator(false);
     }
 };
 
-/**
- * يحمل ويعرض المستخدمين في جدول إدارة المستخدمين.
- */
-const loadAndDisplayUsers = () => {
-    if (!usersTableBody) return;
+// Admin: Manage Users
+const loadAndDisplayUsers = async () => {
     usersTableBody.innerHTML = '';
-    allUsers.forEach(user => {
-        const row = usersTableBody.insertRow();
-        row.innerHTML = `
-            <td>${user.name}</td>
-            <td>${user.pin}</td>
-            <td>
-                <button class="admin-action-btn delete" data-id="${user.id}" data-type="user">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </td>
-        `;
-    });
-};
-
-/**
- * يضيف مستخدمًا جديدًا إلى Firestore.
- */
-const addUser = async () => {
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot add user.");
-        return;
-    }
-    const userName = newUserNameInput.value.trim();
-    const userPIN = newUserPINInput.value.trim();
-
-    if (!userName || userPIN.length !== 8 || !/^\d{8}$/.test(userPIN)) {
-        showToastMessage(getTranslatedText('fillAllFields'), 'error');
-        return;
-    }
-
-    showLoadingIndicator(true);
     try {
-        await addDoc(collection(db, `artifacts/${appId}/public/data/users`), {
-            name: userName,
-            pin: userPIN,
-            role: 'user',
-            createdAt: serverTimestamp()
-        });
-        newUserNameInput.value = '';
-        newUserPINInput.value = '';
-        showToastMessage(getTranslatedText('userAdded'), 'success');
-    } catch (error) {
-        console.error("Error adding user:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
+        // Use cached allUsers data
+        if (allUsers.length === 0) {
+            const row = usersTableBody.insertRow();
+            const cell = row.insertCell(0);
+            cell.colSpan = 3;
+            cell.textContent = getTranslatedText('noDataToShow');
+            cell.style.textAlign = 'center';
+        } else {
+            allUsers.forEach(user => { // Iterate over cached users
+                // Skip rendering admin user in this table
+                if (user.id === 'admin') return;
 
-/**
- * يحذف مستخدمًا من Firestore وجميع سجلات عمله.
- * @param {string} userIdToDelete - معرف المستخدم المراد حذفه.
- */
-const deleteUser = async (userIdToDelete) => {
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot delete user.");
-        return;
-    }
-    // استخدام نافذة منبثقة مخصصة بدلاً من confirm
-    const confirmDelete = await new Promise(resolve => {
-        const modal = document.createElement('div');
-        modal.classList.add('modal');
-        modal.innerHTML = `
-            <div class="modal-content">
-                <span class="close-button">&times;</span>
-                <h3>${getTranslatedText('confirmDeleteUser', { name: allUsers.find(u => u.id === userIdToDelete)?.name || '' })}</h3>
-                <button id="confirmDeleteUserBtn" class="save-work-btn">${getTranslatedText('deleteBtn')}</button>
-                <button id="cancelDeleteUserBtn" class="back-btn">${getTranslatedText('close')}</button>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        modal.style.display = 'flex';
-
-        modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
-        modal.querySelector('#cancelDeleteUserBtn').onclick = () => { modal.remove(); resolve(false); };
-        modal.querySelector('#confirmDeleteUserBtn').onclick = () => { modal.remove(); resolve(true); };
-    });
-
-    if (!confirmDelete) {
-        return;
-    }
-
-    showLoadingIndicator(true);
-    try {
-        // حذف سجلات العمل المرتبطة بالمستخدم
-        const userWorkRecordsQuery = query(collection(db, `artifacts/${appId}/public/data/workRecords`), where("userId", "==", userIdToDelete));
-        const workRecordsSnapshot = await getDocs(userWorkRecordsQuery);
-        const deleteWorkRecordPromises = workRecordsSnapshot.docs.map(docToDelete => deleteDoc(doc(db, `artifacts/${appId}/public/data/workRecords`, docToDelete.id)));
-        await Promise.all(deleteWorkRecordPromises);
-
-        // حذف الأسعار المخصصة المرتبطة بالمستخدم
-        const userCustomRatesQuery = query(collection(db, `artifacts/${appId}/public/data/employeeCustomRates`), where("employeeId", "==", userIdToDelete));
-        const customRatesSnapshot = await getDocs(userCustomRatesQuery);
-        const deleteCustomRatePromises = customRatesSnapshot.docs.map(docToDelete => deleteDoc(doc(db, `artifacts/${appId}/public/data/employeeCustomRates`, docToDelete.id)));
-        await Promise.all(deleteCustomRatePromises);
-
-        // حذف المستخدم نفسه
-        await deleteDoc(doc(db, `artifacts/${appId}/public/data/users`, userIdToDelete));
-
-        showToastMessage(getTranslatedText('userDeleted'), 'success');
-    } catch (error) {
-        console.error("Error deleting user:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
-
-/**
- * يحمل ويعرض الحسابات في جدول إدارة الحسابات.
- */
-const loadAndDisplayAccounts = () => {
-    if (!accountsTableBody) return;
-    accountsTableBody.innerHTML = '';
-    allAccounts.forEach(account => {
-        const row = accountsTableBody.insertRow();
-        row.innerHTML = `
-            <td>${account.name}</td>
-            <td>${formatNumberToEnglish(parseFloat(account.defaultPrice).toFixed(2))}</td>
-            <td>
-                <button class="admin-action-btn delete" data-id="${account.id}" data-type="account">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </td>
-        `;
-    });
-};
-
-/**
- * يضيف حسابًا جديدًا إلى Firestore.
- */
-const addAccount = async () => {
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot add account.");
-        return;
-    }
-    const accountName = newAccountNameInput.value.trim();
-    const defaultPrice = parseFloat(newAccountPriceInput.value);
-
-    if (!accountName || isNaN(defaultPrice) || defaultPrice < 0) {
-        showToastMessage(getTranslatedText('fillAllFields'), 'error');
-        return;
-    }
-
-    showLoadingIndicator(true);
-    try {
-        await addDoc(collection(db, `artifacts/${appId}/public/data/accounts`), {
-            name: accountName,
-            defaultPrice: defaultPrice,
-            createdAt: serverTimestamp()
-        });
-        newAccountNameInput.value = '';
-        newAccountPriceInput.value = '';
-        showToastMessage(getTranslatedText('accountAdded'), 'success');
-    } catch (error) {
-        console.error("Error adding account:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
-
-/**
- * يحذف حسابًا من Firestore.
- * @param {string} accountIdToDelete - معرف الحساب المراد حذفه.
- */
-const deleteAccount = async (accountIdToDelete) => {
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot delete account.");
-        return;
-    }
-    // استخدام نافذة منبثقة مخصصة بدلاً من confirm
-    const confirmDelete = await new Promise(resolve => {
-        const modal = document.createElement('div');
-        modal.classList.add('modal');
-        modal.innerHTML = `
-            <div class="modal-content">
-                <span class="close-button">&times;</span>
-                <h3>${getTranslatedText('confirmDeleteAccount', { name: allAccounts.find(a => a.id === accountIdToDelete)?.name || '' })}</h3>
-                <button id="confirmDeleteAccountBtn" class="save-work-btn">${getTranslatedText('deleteBtn')}</button>
-                <button id="cancelDeleteAccountBtn" class="back-btn">${getTranslatedText('close')}</button>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        modal.style.display = 'flex';
-
-        modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
-        modal.querySelector('#cancelDeleteAccountBtn').onclick = () => { modal.remove(); resolve(false); };
-        modal.querySelector('#confirmDeleteAccountBtn').onclick = () => { modal.remove(); resolve(true); };
-    });
-
-    if (!confirmDelete) {
-        return;
-    }
-
-    showLoadingIndicator(true);
-    try {
-        await deleteDoc(doc(db, `artifacts/${appId}/public/data/accounts`, accountIdToDelete));
-        showToastMessage(getTranslatedText('accountDeleted'), 'success');
-    }
-    catch (error) {
-        console.error("Error deleting account:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
-    } finally {
-        showLoadingIndicator(false);
-    }
-};
-
-/**
- * يحمل ويعرض تعريفات المهام في جدول إدارة المهام.
- */
-const loadAndDisplayTaskDefinitions = () => {
-    if (!tasksDefinitionTableBody) return;
-    tasksDefinitionTableBody.innerHTML = '';
-    allTaskDefinitions.forEach(task => {
-        const timingsDisplay = task.timings.map(t => formatMinutesToMMSS(t.minutes)).join(', ');
-        const row = tasksDefinitionTableBody.insertRow();
-        row.innerHTML = `
-            <td>${task.name}</td>
-            <td>${timingsDisplay}</td>
-            <td>
-                <button class="admin-action-btn delete" data-id="${task.id}" data-type="task">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </td>
-        `;
-    });
-};
-
-/**
- * يضيف حقل إدخال جديد للتوقيتات في قسم إضافة مهمة جديدة.
- */
-const addTimingField = () => {
-    if (!newTimingsContainer) return;
-    const div = document.createElement('div');
-    div.className = 'timing-input-group';
-    div.innerHTML = `
-        <input type="number" class="new-task-timing-minutes" placeholder="${getTranslatedText('minutesPlaceholder')}" min="0">
-        <input type="number" class="new-task-timing-seconds" placeholder="${getTranslatedText('secondsPlaceholder')}" min="0" max="59">
-        <button type="button" class="admin-action-btn delete remove-timing-field" style="width: auto; margin: 0; padding: 5px 8px; font-size: 12px; background-color: #DC3545;">
-            <i class="fas fa-times"></i>
-        </button>
-    `;
-    newTimingsContainer.appendChild(div);
-
-    // إضافة مستمع حدث لزر الإزالة الجديد
-    div.querySelector('.remove-timing-field').addEventListener('click', (e) => {
-        e.target.closest('.timing-input-group').remove();
-    });
-};
-
-/**
- * يضيف تعريف مهمة جديد إلى Firestore.
- */
-const addTaskDefinition = async () => {
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot add task definition.");
-        return;
-    }
-    const taskName = newTaskNameInput.value.trim();
-    const timingInputs = newTimingsContainer.querySelectorAll('.timing-input-group');
-    const timings = [];
-
-    timingInputs.forEach(group => {
-        const minutesInput = group.querySelector('.new-task-timing-minutes');
-        const secondsInput = group.querySelector('.new-task-timing-seconds');
-        const minutes = parseFloat(minutesInput.value);
-        const seconds = parseInt(secondsInput.value);
-
-        if (!isNaN(minutes) && minutes >= 0 && !isNaN(seconds) && seconds >= 0 && seconds < 60) {
-            timings.push({ minutes: minutes, seconds: seconds });
-        }
-    });
-
-    if (!taskName || timings.length === 0) {
-        showToastMessage(getTranslatedText('fillAllFields'), 'error');
-        return;
-    }
-
-    showLoadingIndicator(true);
-    try {
-        await addDoc(collection(db, `artifacts/${appId}/public/data/taskDefinitions`), {
-            name: taskName,
-            timings: timings,
-            createdAt: serverTimestamp()
-        });
-        newTaskNameInput.value = '';
-        if (newTimingsContainer) {
-            newTimingsContainer.innerHTML = `
-                <div class="timing-input-group">
-                    <input type="number" class="new-task-timing-minutes" placeholder="${getTranslatedText('minutesPlaceholder')}" min="0">
-                    <input type="number" class="new-task-timing-seconds" placeholder="${getTranslatedText('secondsPlaceholder')}" min="0" max="59">
-                </div>
-            `; // إعادة تعيين حقول التوقيت
-            // إعادة إضافة مستمع الحدث لزر الإزالة الافتراضي
-            newTimingsContainer.querySelector('.remove-timing-field')?.addEventListener('click', (e) => {
-                e.target.closest('.timing-input-group').remove();
+                const row = usersTableBody.insertRow();
+                row.insertCell().textContent = user.name;
+                row.insertCell().textContent = formatNumberToEnglish(user.pin);
+                const actionCell = row.insertCell();
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = getTranslatedText('deleteBtn');
+                deleteBtn.classList.add('admin-action-btntp', 'delete'); // Use admin-action-btntp for consistency
+                deleteBtn.addEventListener('click', () => {
+                    showConfirmationModal(getTranslatedText('confirmDeleteUser', { name: user.name }), async () => {
+                        showLoadingIndicator(true);
+                        deleteBtn.disabled = true;
+                        deleteBtn.textContent = getTranslatedText('deleting');
+                        try {
+                            await deleteDoc(doc(db, 'users', user.id)); 
+                            showToastMessage(getTranslatedText('userDeletedSuccess'), 'success');
+                            await fetchAllStaticData(); // Re-fetch all static data after deletion
+                            await loadAndDisplayUsers(); // Reload after delete
+                            await populateFilters(); // Update all filter dropdowns
+                            await renderEmployeeRatesAndTotals(); // Update employee rates table
+                        } catch (err) {
+                            showToastMessage(getTranslatedText('errorAddingUser'), 'error'); // Reusing translation key
+                        } finally {
+                            showLoadingIndicator(false);
+                            deleteBtn.disabled = false;
+                            deleteBtn.textContent = getTranslatedText('deleteBtn');
+                        }
+                    }, () => {
+                        // Do nothing if cancelled
+                    });
+                });
+                actionCell.appendChild(deleteBtn);
             });
         }
-        showToastMessage(getTranslatedText('taskAdded'), 'success');
     } catch (error) {
-        console.error("Error adding task definition:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
-    } finally {
-        showLoadingIndicator(false);
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     }
 };
 
-/**
- * يحذف تعريف مهمة من Firestore.
- * @param {string} taskDefinitionIdToDelete - معرف تعريف المهمة المراد حذفه.
- */
-const deleteTaskDefinition = async (taskDefinitionIdToDelete) => {
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot delete task definition.");
-        return;
+const addUser = async () => { // Renamed for clarity
+    const name = newUserNameInput.value.trim();
+    const pin = newUserPINInput.value.trim();
+
+    clearInputError(newUserNameInput, newUserNameInputError);
+    clearInputError(newUserPINInput, newUserPINInputError);
+
+    let isValid = true;
+    if (!name) {
+        showInputError(newUserNameInput, newUserNameInputError, 'requiredField');
+        isValid = false;
     }
-    // استخدام نافذة منبثقة مخصصة بدلاً من confirm
-    const confirmDelete = await new Promise(resolve => {
-        const modal = document.createElement('div');
-        modal.classList.add('modal');
-        modal.innerHTML = `
-            <div class="modal-content">
-                <span class="close-button">&times;</span>
-                <h3>${getTranslatedText('confirmDeleteTask', { name: allTaskDefinitions.find(t => t.id === taskDefinitionIdToDelete)?.name || '' })}</h3>
-                <button id="confirmDeleteTaskBtn" class="save-work-btn">${getTranslatedText('deleteBtn')}</button>
-                <button id="cancelDeleteTaskBtn" class="back-btn">${getTranslatedText('close')}</button>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        modal.style.display = 'flex';
+    if (pin.length !== 8 || !/^\d+$/.test(pin)) { // Ensure PIN is 8 digits and numeric
+        showInputError(newUserPINInput, newUserPINInputError, 'invalidPinLength');
+        isValid = false;
+    }
 
-        modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
-        modal.querySelector('#cancelDeleteTaskBtn').onclick = () => { modal.remove(); resolve(false); };
-        modal.querySelector('#confirmDeleteTaskBtn').onclick = () => { modal.remove(); resolve(true); };
-    });
-
-    if (!confirmDelete) {
+    if (!isValid) {
         return;
     }
 
     showLoadingIndicator(true);
+    addUserBtn.disabled = true;
+    addUserBtn.textContent = getTranslatedText('adding');
     try {
-        await deleteDoc(doc(db, `artifacts/${appId}/public/data/taskDefinitions`, taskDefinitionIdToDelete));
-        showToastMessage(getTranslatedText('taskDeleted'), 'success');
+        const usersCollectionRef = collection(db, 'users'); 
+        const existingUserQueryRef = query(usersCollectionRef, where('pin', '==', pin), limit(1)); 
+        const existingUserSnapshot = await getDocs(existingUserQueryRef); 
+        if (!existingUserSnapshot.empty) {
+            showInputError(newUserPINInput, newUserPINInputError, 'pinAlreadyUsed');
+            showToastMessage(getTranslatedText('pinAlreadyUsed'), 'error');
+            return;
+        }
+
+        await addDoc(usersCollectionRef, { name: name, pin: pin, role: 'user' }); 
+        showToastMessage(getTranslatedText('userAddedSuccess'), 'success');
+        newUserNameInput.value = '';
+        newUserPINInput.value = '';
+        await fetchAllStaticData(); // Re-fetch all static data after adding
+        await loadAndDisplayUsers();
+        await populateFilters(); // Re-populate all filters after adding a new user
+        await renderEmployeeRatesAndTotals(); // Update employee rates table
     } catch (error) {
-        console.error("Error deleting task definition:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
+        showToastMessage(getTranslatedText('errorAddingUser'), 'error');
     } finally {
         showLoadingIndicator(false);
+        addUserBtn.disabled = false;
+        addUserBtn.textContent = getTranslatedText('addUserBtn');
     }
 };
 
-/**
- * يملأ قائمة المستخدمين المنسدلة في فلتر سجلات العمل.
- */
-const populateUserFilter = () => {
-    if (!recordFilterUser) return;
+// Admin: Manage Accounts (Updated for defaultPricePerHour)
+const loadAndDisplayAccounts = async () => {
+    accountsTableBody.innerHTML = '';
+    try {
+        // Use cached allAccounts data
+        if (allAccounts.length === 0) {
+            const row = accountsTableBody.insertRow();
+            const cell = row.insertCell(0);
+            cell.colSpan = 3; // Adjusted colspan for new column
+            cell.textContent = getTranslatedText('noDataToShow');
+            cell.style.textAlign = 'center';
+        } else {
+            allAccounts.forEach(account => { // Iterate over cached accounts
+                const row = accountsTableBody.insertRow();
+                row.insertCell().textContent = account.name;
+                row.insertCell().textContent = formatNumberToEnglish((account.defaultPricePerHour || 0).toFixed(2)); // Display default price
+                const actionCell = row.insertCell();
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = getTranslatedText('deleteBtn');
+                deleteBtn.classList.add('admin-action-btntp', 'delete'); // Use admin-action-btntp for consistency
+                deleteBtn.addEventListener('click', () => {
+                    showConfirmationModal(getTranslatedText('confirmDeleteAccount', { name: account.name }), async () => {
+                        showLoadingIndicator(true);
+                        deleteBtn.disabled = true;
+                        deleteBtn.textContent = getTranslatedText('deleting');
+                        try {
+                            await deleteDoc(doc(db, 'accounts', account.id)); 
+                            showToastMessage(getTranslatedText('accountDeletedSuccess'), 'success');
+                            await fetchAllStaticData(); // Re-fetch all static data after deletion
+                            await loadAndDisplayAccounts(); // Reload after delete
+                            await renderEmployeeRatesAndTotals(); // Update employee rates table
+                            await populateFilters(); // Update all filter dropdowns
+                        } catch (err) {
+                            showToastMessage(getTranslatedText('errorAddingAccount'), 'error'); // Reusing translation key
+                        } finally {
+                            showLoadingIndicator(false);
+                            deleteBtn.disabled = false;
+                            deleteBtn.textContent = getTranslatedText('deleteBtn');
+                        }
+                    }, () => {
+                        // Do nothing if cancelled
+                    });
+                });
+                actionCell.appendChild(deleteBtn);
+            });
+        }
+    }
+    catch (error) {
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
+    }
+};
+
+const addAccount = async () => { // Renamed for clarity
+    const name = newAccountNameInput.value.trim();
+    const defaultPrice = parseFloat(newAccountPriceInput.value); // Get default price
+
+    clearInputError(newAccountNameInput, newAccountNameInputError);
+    clearInputError(newAccountPriceInput, newAccountPriceInputError);
+
+    let isValid = true;
+    if (!name) {
+        showInputError(newAccountNameInput, newAccountNameInputError, 'requiredField');
+        isValid = false;
+    }
+    if (isNaN(defaultPrice) || defaultPrice < 0) { // Validate price
+        showInputError(newAccountPriceInput, newAccountPriceInputError, 'invalidNumber');
+        isValid = false;
+    }
+
+    if (!isValid) {
+        return;
+    }
+
+    showLoadingIndicator(true);
+    addAccountBtn.disabled = true;
+    addAccountBtn.textContent = getTranslatedText('adding');
+    try {
+        const accountsCollectionRef = collection(db, 'accounts'); 
+        const existingAccountQueryRef = query(accountsCollectionRef, where('name', '==', name), limit(1)); 
+        const existingAccountSnapshot = await getDocs(existingAccountQueryRef); 
+        if (!existingAccountSnapshot.empty) {
+            showInputError(newAccountNameInput, newAccountNameInputError, 'accountExists');
+            showToastMessage(getTranslatedText('accountExists'), 'error');
+            return;
+        }
+
+        await addDoc(accountsCollectionRef, { name: name, defaultPricePerHour: defaultPrice }); // Save default price
+        showToastMessage(getTranslatedText('accountAddedSuccess'), 'success');
+        newAccountNameInput.value = '';
+        newAccountPriceInput.value = ''; // Clear price input
+        await fetchAllStaticData(); // Re-fetch all static data after adding
+        await loadAndDisplayAccounts();
+        await renderEmployeeRatesAndTotals(); // Update employee rates table
+        await populateFilters(); // Update all filter dropdowns
+    } catch (error) {
+        showToastMessage(getTranslatedText('errorAddingAccount'), 'error');
+    } finally {
+        showLoadingIndicator(false);
+        addAccountBtn.disabled = false;
+        addAccountBtn.textContent = getTranslatedText('addAccountBtn');
+    }
+};
+
+// Admin: Manage Task Definitions (Updated for minutes and seconds input)
+const loadAndDisplayTaskDefinitions = async () => {
+    tasksDefinitionTableBody.innerHTML = '';
+    try {
+        // Use cached allTaskDefinitions data
+        if (allTaskDefinitions.length === 0) {
+            const row = tasksDefinitionTableBody.insertRow();
+            const cell = row.insertCell(0);
+            cell.colSpan = 3;
+            cell.textContent = getTranslatedText('noDataToShow');
+            cell.style.textAlign = 'center';
+        } else {
+            allTaskDefinitions.forEach(task => { // Iterate over cached tasks
+                const row = tasksDefinitionTableBody.insertRow();
+                row.insertCell().textContent = task.name;
+                
+                const timingsCell = row.insertCell();
+                if (task.timings && task.timings.length > 0) {
+                    // Display timings in MM:SS format with English digits
+                    const timingStrings = task.timings.map(t => formatNumberToEnglish(formatMinutesToMMSS(t)));
+                    timingsCell.textContent = timingStrings.join(', ');
+                } else {
+                    timingsCell.textContent = getTranslatedText('noTimings'); // Or empty
+                }
+
+                const actionCell = row.insertCell();
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = getTranslatedText('deleteBtn');
+                deleteBtn.classList.add('admin-action-btntp', 'delete'); // Use admin-action-btntp for consistency
+                deleteBtn.addEventListener('click', () => {
+                    showConfirmationModal(getTranslatedText('confirmDeleteTask', { name: task.name }), async () => {
+                        showLoadingIndicator(true);
+                        deleteBtn.disabled = true;
+                        deleteBtn.textContent = getTranslatedText('deleting');
+                        try {
+                            await deleteDoc(doc(db, 'tasks', task.id)); 
+                            showToastMessage(getTranslatedText('taskDeletedSuccess'), 'success');
+                            await fetchAllStaticData(); // Re-fetch all static data after deletion
+                            await loadAndDisplayTaskDefinitions(); // Reload after delete
+                            await populateFilters(); // Update all filter dropdowns
+                        } catch (err) {
+                            showToastMessage(getTranslatedText('errorAddingTask'), 'error'); // Reusing translation key
+                        } finally {
+                            showLoadingIndicator(false);
+                            deleteBtn.disabled = false;
+                            deleteBtn.textContent = getTranslatedText('deleteBtn');
+                        }
+                    }, () => {
+                        // Do nothing if cancelled
+                    });
+                });
+                actionCell.appendChild(deleteBtn);
+            });
+        }
+    } catch (error) {
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
+    }
+};
+
+const addTimingField = () => { // Renamed for clarity
+    const minutesInput = document.createElement('input');
+    minutesInput.type = 'number';
+    minutesInput.classList.add('new-task-timing-minutes');
+    minutesInput.placeholder = getTranslatedText('minutesPlaceholder');
+    minutesInput.min = '0';
+
+    const secondsInput = document.createElement('input');
+    secondsInput.type = 'number';
+    secondsInput.classList.add('new-task-timing-seconds');
+    secondsInput.placeholder = getTranslatedText('secondsPlaceholder');
+    secondsInput.min = '0';
+    secondsInput.max = '59';
+
+    const timingGroupDiv = document.createElement('div');
+    timingGroupDiv.classList.add('timing-input-group'); // Apply the new flex styling
+    timingGroupDiv.appendChild(minutesInput);
+    timingGroupDiv.appendChild(secondsInput);
+
+    newTimingsContainer.appendChild(timingGroupDiv);
+};
+
+const addTaskDefinition = async () => { // Renamed for clarity
+    const name = newTaskNameInput.value.trim();
+    clearInputError(newTaskNameInput, newTaskNameInputError);
+    clearInputError(newTimingsContainer.querySelector('.new-task-timing-minutes') || newTimingsContainer, newTimingsInputError); // Clear error for timing inputs
+
+    let isValid = true;
+    if (!name) {
+        showInputError(newTaskNameInput, newTaskNameInputError, 'requiredField');
+        isValid = false;
+    }
+
+    const timingInputsMinutes = newTimingsContainer.querySelectorAll('.new-task-timing-minutes');
+    const timingInputsSeconds = newTimingsContainer.querySelectorAll('.new-task-timing-seconds');
+    const timings = [];
+    let hasValidTimings = false;
+
+    timingInputsMinutes.forEach((minInput, index) => {
+        const secInput = timingInputsSeconds[index];
+        const minutes = parseInt(minInput.value);
+        const seconds = parseInt(secInput.value);
+
+        if (!isNaN(minutes) && minutes >= 0 && !isNaN(seconds) && seconds >= 0 && seconds < 60) {
+            const totalMinutes = minutes + (seconds / 60);
+            timings.push(totalMinutes);
+            hasValidTimings = true;
+        } else if (minInput.value !== '' || secInput.value !== '') {
+            // Only show error if fields are not empty but invalid
+            showInputError(minInput, newTimingsInputError, 'invalidTimeInput'); // Point to the first invalid input
+            isValid = false;
+        }
+    });
+
+    if (!hasValidTimings && isValid) { // If no valid timings were added and no other errors
+        showInputError(newTimingsContainer.querySelector('.new-task-timing-minutes') || newTimingsContainer, newTimingsInputError, 'enterTaskNameTiming');
+        isValid = false;
+    }
+
+    if (!isValid) {
+        return;
+    }
+
+    showLoadingIndicator(true);
+    addTaskDefinitionBtn.disabled = true;
+    addTaskDefinitionBtn.textContent = getTranslatedText('adding');
+    try {
+        const tasksCollectionRef = collection(db, 'tasks'); 
+        const existingTaskQueryRef = query(tasksCollectionRef, where('name', '==', name), limit(1)); 
+        const existingTaskSnapshot = await getDocs(existingTaskQueryRef); 
+        if (!existingTaskSnapshot.empty) {
+            showInputError(newTaskNameInput, newTaskNameInputError, 'taskExists');
+            showToastMessage(getTranslatedText('taskExists'), 'error');
+            return;
+        }
+
+        await addDoc(tasksCollectionRef, { name: name, timings: timings }); 
+        showToastMessage(getTranslatedText('taskAddedSuccess'), 'success');
+        newTaskNameInput.value = '';
+        newTimingsContainer.innerHTML = `
+            <div class="timing-input-group">
+                <input type="number" class="new-task-timing-minutes" placeholder="${getTranslatedText('minutesPlaceholder')}" min="0" data-key="minutesPlaceholder">
+                <input type="number" class="new-task-timing-seconds" placeholder="${getTranslatedText('secondsPlaceholder')}" min="0" max="59" data-key="secondsPlaceholder">
+            </div>
+        `; // Reset to one pair
+        await fetchAllStaticData(); // Re-fetch all static data after adding
+        await loadAndDisplayTaskDefinitions();
+        await populateFilters(); // Update all filter dropdowns
+    } catch (error) {
+        showToastMessage(getTranslatedText('errorAddingTask'), 'error');
+    } finally {
+        showLoadingIndicator(false);
+        addTaskDefinitionBtn.disabled = false;
+        addTaskDefinitionBtn.textContent = getTranslatedText('addTaskBtn');
+    }
+};
+
+// Admin: Manage Work Records
+const populateFilters = async () => {
+    // Populate User Filter
     recordFilterUser.innerHTML = `<option value="">${getTranslatedText('allUsers')}</option>`;
     allUsers.forEach(user => {
+        if (user.id === 'admin') return;
         const option = document.createElement('option');
         option.value = user.id;
         option.textContent = user.name;
         recordFilterUser.appendChild(option);
     });
-};
 
-/**
- * يحمل ويعرض سجلات العمل بناءً على الفلاتر.
- * @param {string|null} userIdFilter - معرف المستخدم للتصفية، أو null للجميع.
- * @param {string|null} dateFilter - تاريخ للتصفية (YYYY-MM-DD)، أو null للجميع.
- */
-const loadAndDisplayWorkRecords = async (userIdFilter, dateFilter) => {
-    if (!workRecordsTableBody) return;
-    workRecordsTableBody.innerHTML = '';
-    let filteredRecords = [...allWorkRecords]; // ابدأ بجميع السجلات
-
-    if (userIdFilter) {
-        filteredRecords = filteredRecords.filter(record => record.userId === userIdFilter);
-    }
-    if (dateFilter) {
-        filteredRecords = filteredRecords.filter(record => record.timestamp.toDate().toISOString().split('T')[0] === dateFilter);
-    }
-
-    if (filteredRecords.length === 0) {
-        workRecordsTableBody.innerHTML = `<tr><td colspan="7">${getTranslatedText('noDataAvailable')}</td></tr>`;
-        return;
-    }
-
-    // فرز السجلات حسب التاريخ تنازليًا
-    filteredRecords.sort((a, b) => b.timestamp.toDate() - a.timestamp.toDate());
-
-    filteredRecords.forEach(record => {
-        const recordDate = record.timestamp.toDate();
-        const formattedDate = recordDate.toLocaleDateString(currentLanguage === 'ar' ? 'ar-EG' : 'en-US');
-        const formattedTime = recordDate.toLocaleTimeString(currentLanguage === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-
-        const row = workRecordsTableBody.insertRow();
-        row.innerHTML = `
-            <td>${record.userName}</td>
-            <td>${record.accountName}</td>
-            <td>${record.taskName}</td>
-            <td>${formatNumberToEnglish(record.totalTasksCount)}</td>
-            <td>${formatNumberToEnglish(record.totalTimeMinutes.toFixed(2))}</td>
-            <td>${formattedDate} ${formattedTime}</td>
-            <td>
-                <button class="admin-action-btn edit" data-id="${record.id}" data-type="record">
-                    <i class="fas fa-edit"></i>
-                </button>
-                <button class="admin-action-btn delete" data-id="${record.id}" data-type="record">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </td>
-        `;
-    });
-};
-
-/**
- * يفتح نافذة تعديل سجل العمل المنبثقة ويملأها بالبيانات.
- * @param {Object} record - كائن سجل العمل المراد تعديله.
- */
-const openEditRecordModal = (record) => {
-    if (!editRecordModal || !editAccountSelect || !editTaskTypeSelect || !editTotalTasksCount || !editTotalTime || !editRecordDate || !editRecordTime) {
-        console.warn("Edit record modal elements not found.");
-        return;
-    }
-    currentEditingRecordId = record.id;
-
-    // ملء قوائم الحسابات والمهام المنسدلة
-    editAccountSelect.innerHTML = '';
+    // Populate Account Filter
+    recordFilterAccount.innerHTML = `<option value="">${getTranslatedText('allAccounts')}</option>`;
     allAccounts.forEach(account => {
         const option = document.createElement('option');
         option.value = account.id;
         option.textContent = account.name;
-        editAccountSelect.appendChild(option);
+        recordFilterAccount.appendChild(option);
     });
 
+    // Populate Task Filter
+    recordFilterTask.innerHTML = `<option value="">${getTranslatedText('allTasks')}</option>`;
+    allTaskDefinitions.forEach(task => {
+        const option = document.createElement('option');
+        option.value = task.id;
+        option.textContent = task.name;
+        recordFilterTask.appendChild(option);
+    });
+};
+
+
+const loadAndDisplayWorkRecords = async (userId = null, date = null, accountId = null, taskDefinitionId = null) => {
+    workRecordsTableBody.innerHTML = '';
+    showLoadingIndicator(true);
+    try {
+        const workRecordsCollectionRef = collection(db, 'workRecords'); 
+        let recordsQuery = query(workRecordsCollectionRef, orderBy('timestamp', 'desc')); 
+
+        if (userId) {
+            recordsQuery = query(recordsQuery, where('userId', '==', userId)); 
+        }
+
+        if (accountId) { // New filter
+            recordsQuery = query(recordsQuery, where('accountId', '==', accountId));
+        }
+
+        if (taskDefinitionId) { // New filter
+            recordsQuery = query(recordsQuery, where('taskDefinitionId', '==', taskDefinitionId));
+        }
+
+        if (date) {
+            const startOfDay = new Date(date);
+            startOfDay.setHours(0, 0, 0, 0);
+            const endOfDay = new Date(date);
+            endOfDay.setHours(23, 59, 59, 999);
+
+            recordsQuery = query(recordsQuery,
+                where('timestamp', '>=', Timestamp.fromDate(startOfDay)), 
+                where('timestamp', '<=', Timestamp.fromDate(endOfDay)) 
+            );
+        }
+
+        const recordsSnapshot = await getDocs(recordsQuery); 
+        if (recordsSnapshot.empty) {
+            const row = workRecordsTableBody.insertRow();
+            const cell = row.insertCell(0);
+            cell.colSpan = 6; // Adjusted colspan from 7 to 6
+            cell.textContent = getTranslatedText('noMatchingRecords');
+            cell.style.textAlign = 'center';
+        } else {
+            recordsSnapshot.forEach(documentSnapshot => { 
+                const record = getDocData(documentSnapshot);
+                const row = workRecordsTableBody.insertRow();
+                row.insertCell().textContent = record.userName;
+                row.insertCell().textContent = record.accountName;
+                row.insertCell().textContent = record.taskDefinitionName;
+
+                const totalTimeCell = row.insertCell(); // This is now the "إجمالي الوقت (دقيقة)" cell
+                totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(record.totalTime)); // Format total time
+                
+                // Construct tooltip for totalTimeCell
+                const taskCountsByTiming = {};
+                record.recordedTimings.forEach(rt => {
+                    // Use total seconds (multiplied by 1000 for precision) as the key for grouping
+                    const timingKey = Math.round(rt.timing * 1000).toString(); 
+                    taskCountsByTiming[timingKey] = (taskCountsByTiming[timingKey] || 0) + 1;
+                });
+
+                const tooltipContent = Object.keys(taskCountsByTiming)
+                    .map(timingKey => { // Renamed to timingKey
+                        const count = taskCountsByTiming[timingKey];
+                        // Convert timingKey back to decimal minutes for display in tooltip
+                        const formattedTime = formatMinutesToMMSS(parseFloat(timingKey) / 1000);
+                        return getTranslatedText('tasksSummaryTooltip', {
+                            count: formatNumberToEnglish(count),
+                            time: formatNumberToEnglish(formattedTime)
+                        });
+                    })
+                    .join('\n'); // Join with newline for multi-line tooltip
+
+                totalTimeCell.title = tooltipContent; // Set the tooltip
+
+                row.insertCell().textContent = record.timestamp ? new Date(record.timestamp.toDate()).toLocaleDateString(currentLanguage, { day: 'numeric', month: 'short' }) : 'N/A'; // Format date as "1 May"
+                
+                const actionCell = row.insertCell();
+                const editBtn = document.createElement('button');
+                editBtn.textContent = getTranslatedText('editRecord');
+                editBtn.classList.add('admin-action-btntp'); // Use admin-action-btntp for consistency
+                editBtn.addEventListener('click', () => openEditRecordModal(record));
+                actionCell.appendChild(editBtn);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = getTranslatedText('deleteBtn');
+                deleteBtn.classList.add('admin-action-btntp', 'delete'); // Use admin-action-btntp for consistency
+                deleteBtn.addEventListener('click', () => {
+                    showConfirmationModal(getTranslatedText('confirmDeleteRecord', { name: record.userName }), async () => {
+                        showLoadingIndicator(true);
+                        deleteBtn.disabled = true;
+                        deleteBtn.textContent = getTranslatedText('deleting');
+                        try {
+                            await deleteDoc(doc(db, 'workRecords', record.id)); 
+                            showToastMessage(getTranslatedText('recordDeletedSuccess'), 'success');
+                            await loadAndDisplayWorkRecords(recordFilterUser.value, recordFilterDate.value, recordFilterAccount.value, recordFilterTask.value); // Reload with current filters
+                            await renderEmployeeRatesAndTotals(); // Update employee rates table
+                        } catch (err) {
+                            showToastMessage(getTranslatedText('errorDeletingRecord'), 'error');
+                        } finally {
+                            showLoadingIndicator(false);
+                            deleteBtn.disabled = false;
+                            deleteBtn.textContent = getTranslatedText('deleteBtn');
+                        }
+                    }, () => {
+                        // Do nothing if cancelled
+                    });
+                });
+                actionCell.appendChild(deleteBtn);
+            });
+        }
+    } catch (error) {
+        showToastMessage(getTranslatedText('errorLoadingRecords'), 'error');
+    } finally {
+        showLoadingIndicator(false);
+    }
+};
+
+// Edit Record Modal Functions
+const openEditRecordModal = (record) => {
+    currentEditingRecordId = record.id;
+
+    // Clear previous errors
+    clearInputError(editAccountSelect, editAccountSelectError);
+    clearInputError(editTaskTypeSelect, editTaskTypeSelectError);
+    clearInputError(editTotalTasksCount, editTotalTasksCountError);
+    clearInputError(editTotalTime, editTotalTimeError);
+    clearInputError(editRecordDate, editRecordDateError);
+    clearInputError(editRecordTime, editRecordTimeError);
+
+    // Populate accounts select from cached data
+    editAccountSelect.innerHTML = '';
+    allAccounts.forEach(acc => {
+        const option = document.createElement('option');
+        option.value = acc.id;
+        option.textContent = acc.name;
+        editAccountSelect.appendChild(option);
+    });
+    editAccountSelect.value = record.accountId;
+
+    // Populate tasks select from cached data
     editTaskTypeSelect.innerHTML = '';
     allTaskDefinitions.forEach(task => {
         const option = document.createElement('option');
@@ -1895,372 +2276,491 @@ const openEditRecordModal = (record) => {
         option.textContent = task.name;
         editTaskTypeSelect.appendChild(option);
     });
-
-    // تعيين القيم الحالية للسجل
-    editAccountSelect.value = record.accountId;
     editTaskTypeSelect.value = record.taskDefinitionId;
-    editTotalTasksCount.value = record.totalTasksCount;
-    editTotalTime.value = record.totalTimeMinutes.toFixed(2);
 
-    const recordDate = record.timestamp.toDate();
-    editRecordDate.value = recordDate.toISOString().split('T')[0]; // تنسيق YYYY-MM-DD
-    editRecordTime.value = recordDate.toTimeString().split(' ')[0].substring(0, 5); // تنسيق HH:MM
+    editTotalTasksCount.value = formatNumberToEnglish(record.totalTasksCount);
+    editTotalTime.value = formatNumberToEnglish(record.totalTime.toFixed(2)); // Keep as decimal for input
 
-    editRecordModal.style.display = 'flex';
+    // Populate date and time inputs
+    if (record.timestamp) {
+        const recordDate = new Date(record.timestamp.toDate());
+        editRecordDate.value = recordDate.toISOString().split('T')[0]; // ISO 8601 (YYYY-MM-DD)
+        editRecordTime.value = recordDate.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+    } else {
+        editRecordDate.value = '';
+        editRecordTime.value = '';
+    }
+
+    editRecordModal.style.display = 'flex'; // Use flex to center
 };
 
-/**
- * يحفظ التعديلات على سجل العمل.
- */
-const saveEditedRecord = async () => {
+const saveEditedRecord = async () => { // Renamed for clarity
     if (!currentEditingRecordId) return;
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot save edited record.");
+
+    const newAccountId = editAccountSelect.value;
+    const newTaskDefinitionId = editTaskTypeSelect.value;
+    const newTotalTasksCount = parseInt(editTotalTasksCount.value);
+    const newTotalTime = parseFloat(editTotalTime.value);
+    const newDate = editRecordDate.value;
+    const newTime = editRecordTime.value;
+
+    // Clear previous errors
+    clearInputError(editAccountSelect, editAccountSelectError);
+    clearInputError(editTaskTypeSelect, editTaskTypeSelectError);
+    clearInputError(editTotalTasksCount, editTotalTasksCountError);
+    clearInputError(editTotalTime, editTotalTimeError);
+    clearInputError(editRecordDate, editRecordDateError);
+    clearInputError(editRecordTime, editRecordTimeError);
+
+    let isValid = true;
+    if (!newAccountId) { showInputError(editAccountSelect, editAccountSelectError, 'requiredField'); isValid = false; }
+    if (!newTaskDefinitionId) { showInputError(editTaskTypeSelect, editTaskTypeSelectError, 'requiredField'); isValid = false; }
+    if (isNaN(newTotalTasksCount) || newTotalTasksCount < 0) { showInputError(editTotalTasksCount, editTotalTasksCountError, 'invalidNumber'); isValid = false; }
+    if (isNaN(newTotalTime) || newTotalTime < 0) { showInputError(editTotalTime, editTotalTimeError, 'invalidNumber'); isValid = false; }
+    if (!newDate) { showInputError(editRecordDate, editRecordDateError, 'requiredField'); isValid = false; }
+    if (!newTime) { showInputError(editRecordTime, editRecordTimeError, 'requiredField'); isValid = false; }
+
+    if (!isValid) {
+        showToastMessage(getTranslatedText('invalidEditData'), 'error');
         return;
     }
 
-    const accountId = editAccountSelect.value;
-    const taskDefinitionId = editTaskTypeSelect.value;
-    const totalTasksCount = parseInt(editTotalTasksCount.value);
-    const totalTimeMinutes = parseFloat(editTotalTime.value);
-    const recordDate = editRecordDate.value;
-    const recordTime = editRecordTime.value;
+    const newAccountName = allAccounts.find(acc => acc.id === newAccountId)?.name || 'Unknown';
+    const newTaskDefinitionName = allTaskDefinitions.find(task => task.id === newTaskDefinitionId)?.name || 'Unknown';
 
-    if (!accountId || !taskDefinitionId || isNaN(totalTasksCount) || totalTasksCount < 0 || isNaN(totalTimeMinutes) || totalTimeMinutes < 0 || !recordDate || !recordTime) {
-        showToastMessage(getTranslatedText('fillAllFields'), 'error');
-        return;
-    }
+    // Combine date and time into a new Date object for timestamp
+    const newTimestampDate = new Date(`${newDate}T${newTime}:00`); // Assuming time is HH:MM
+    const newTimestamp = Timestamp.fromDate(newTimestampDate); // Use direct import Timestamp
 
     showLoadingIndicator(true);
+    saveEditedRecordBtn.disabled = true;
+    saveEditedRecordBtn.textContent = getTranslatedText('updating');
     try {
-        const selectedAccount = allAccounts.find(acc => acc.id === accountId);
-        const selectedTask = allTaskDefinitions.find(task => task.id === taskDefinitionId);
-        const existingRecord = allWorkRecords.find(rec => rec.id === currentEditingRecordId);
-
-        if (!selectedAccount || !selectedTask || !existingRecord) {
-            showToastMessage(getTranslatedText('error'), 'error');
-            return;
-        }
-
-        // دمج التاريخ والوقت في كائن Date ثم Timestamp
-        const dateTimeString = `${recordDate}T${recordTime}:00`;
-        const newTimestamp = Timestamp.fromDate(new Date(dateTimeString));
-
-        await updateDoc(doc(db, `artifacts/${appId}/public/data/workRecords`, currentEditingRecordId), {
-            accountId: accountId,
-            accountName: selectedAccount.name,
-            taskDefinitionId: taskDefinitionId,
-            taskName: selectedTask.name,
-            totalTasksCount: totalTasksCount,
-            totalTimeMinutes: totalTimeMinutes,
-            timestamp: newTimestamp,
-            // userName و userId لا تتغير في التعديل
+        const recordDocRef = doc(db, 'workRecords', currentEditingRecordId); 
+        await updateDoc(recordDocRef, { 
+            accountId: newAccountId,
+            accountName: newAccountName,
+            taskDefinitionId: newTaskDefinitionId,
+            taskDefinitionName: newTaskDefinitionName,
+            totalTasksCount: newTotalTasksCount,
+            totalTime: newTotalTime,
+            timestamp: newTimestamp, // Update the main timestamp of the record
+            lastModified: serverTimestamp() 
         });
-        showToastMessage(getTranslatedText('recordUpdated'), 'success');
+        showToastMessage(getTranslatedText('recordUpdatedSuccess'), 'success');
         editRecordModal.style.display = 'none';
         currentEditingRecordId = null;
+        await loadAndDisplayWorkRecords(recordFilterUser.value, recordFilterDate.value, recordFilterAccount.value, recordFilterTask.value); // Reload records
+        await renderEmployeeRatesAndTotals(); // Update employee rates table
     } catch (error) {
-        console.error("Error saving edited record:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
+        showToastMessage(getTranslatedText('errorUpdatingRecord'), 'error');
     } finally {
         showLoadingIndicator(false);
+        saveEditedRecordBtn.disabled = false;
+        saveEditedRecordBtn.textContent = getTranslatedText('saveChangesBtn');
     }
 };
 
-/**
- * يحذف سجل عمل من Firestore.
- * @param {string} recordIdToDelete - معرف السجل المراد حذفه.
- */
-const deleteWorkRecord = async (recordIdToDelete) => {
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot delete work record.");
-        return;
-    }
-    // استخدام نافذة منبثقة مخصصة بدلاً من confirm
-    const confirmDelete = await new Promise(resolve => {
-        const modal = document.createElement('div');
-        modal.classList.add('modal');
-        modal.innerHTML = `
-            <div class="modal-content">
-                <span class="close-button">&times;</span>
-                <h3>${getTranslatedText('confirmDeleteRecord')}</h3>
-                <button id="confirmDeleteRecordBtn" class="save-work-btn">${getTranslatedText('deleteBtn')}</button>
-                <button id="cancelDeleteRecordBtn" class="back-btn">${getTranslatedText('close')}</button>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        modal.style.display = 'flex';
+// --- New Admin Section: Employee Rates and Totals ---
 
-        modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
-        modal.querySelector('#cancelDeleteRecordBtn').onclick = () => { modal.remove(); resolve(false); };
-        modal.querySelector('#confirmDeleteRecordBtn').onclick = () => { modal.remove(); resolve(true); };
-    });
-
-    if (!confirmDelete) {
-        return;
-    }
-
+const renderEmployeeRatesAndTotals = async () => {
+    employeeRatesTableBody.innerHTML = '';
     showLoadingIndicator(true);
     try {
-        await deleteDoc(doc(db, `artifacts/${appId}/public/data/workRecords`, recordIdToDelete));
-        showToastMessage(getTranslatedText('recordDeleted'), 'success');
+        // Use cached allUsers and allAccounts
+        const users = allUsers;
+        const accounts = allAccounts;
+        const accountsMap = new Map(accounts.map(acc => [acc.id, acc])); // Map for quick lookup
+
+        const workRecordsCol = collection(db, 'workRecords');
+        const workRecordsSnapshot = await getDocs(workRecordsCol);
+        const workRecords = workRecordsSnapshot.docs.map(getDocData);
+
+        const userAccountRatesCol = collection(db, 'userAccountRates');
+        const userAccountRatesSnapshot = await getDocs(userAccountRatesCol);
+        const userAccountRates = userAccountRatesSnapshot.docs.map(getDocData);
+        // Map custom rates: Map<userId, Map<accountId, {docId, customPricePerHour}>>
+        const customRatesMap = new Map();
+        userAccountRates.forEach(rate => {
+            if (!customRatesMap.has(rate.userId)) {
+                customRatesMap.set(rate.userId, new Map());
+            }
+            customRatesMap.get(rate.userId).set(rate.accountId, { docId: rate.id, customPricePerHour: rate.customPricePerHour });
+        });
+
+        const employeeWorkData = new Map(); // Map<userId, { totalHours: 0, totalBalance: 0, workedAccounts: Map<accountId, totalMinutes> }>
+
+        workRecords.forEach(record => {
+            if (!employeeWorkData.has(record.userId)) {
+                employeeWorkData.set(record.userId, { totalHours: 0, totalBalance: 0, workedAccounts: new Map() });
+            }
+            const userData = employeeWorkData.get(record.userId);
+            userData.totalHours += record.totalTime / 60; // Convert to hours
+            userData.workedAccounts.set(record.accountId, (userData.workedAccounts.get(record.accountId) || 0) + record.totalTime); // Store total minutes per account
+
+            // Calculate balance for this record using applicable price
+            let pricePerHour = accountsMap.get(record.accountId)?.defaultPricePerHour || 0;
+            if (customRatesMap.has(record.userId) && customRatesMap.get(record.userId).has(record.accountId)) {
+                pricePerHour = customRatesMap.get(record.userId).get(record.accountId).customPricePerHour;
+            }
+            userData.totalBalance += (record.totalTime / 60) * pricePerHour;
+        });
+
+        users.forEach(user => {
+            // Skip admin user in this table
+            if (user.id === 'admin') return;
+
+            const userData = employeeWorkData.get(user.id) || { totalHours: 0, totalBalance: 0, workedAccounts: new Map() };
+
+            // Get accounts the user has worked on
+            const userWorkedAccountIds = Array.from(userData.workedAccounts.keys());
+            const accountsWorkedOn = userWorkedAccountIds.map(id => accountsMap.get(id)).filter(Boolean);
+
+            if (accountsWorkedOn.length === 0) {
+                // If user hasn't worked on any account, display a single row for the user with "No data"
+                const row = employeeRatesTableBody.insertRow();
+                row.insertCell().textContent = ''; // Empty cell for icon
+                row.insertCell().textContent = user.name;
+                row.insertCell().textContent = getTranslatedText('noDataToShow'); // Account Name
+                row.insertCell().textContent = getTranslatedText('notSet'); // Default Price
+                row.insertCell().textContent = getTranslatedText('notSet'); // Custom Price
+                row.insertCell().textContent = getTranslatedText('notSet'); // Account Total Time
+                row.insertCell().textContent = getTranslatedText('notSet'); // Account Balance
+                row.insertCell().textContent = formatNumberToEnglish(userData.totalHours.toFixed(2)); // Total Hours
+                row.insertCell().textContent = `${formatNumberToEnglish(userData.totalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')}`; // Total Balance
+            } else {
+                let isFirstRowForUser = true;
+                accountsWorkedOn.forEach(account => {
+                    let defaultPrice = account.defaultPricePerHour || 0;
+                    let customRateData = customRatesMap.get(user.id)?.get(account.id);
+                    let customPrice = customRateData?.customPricePerHour || null;
+                    let customRateDocId = customRateData?.docId || null;
+
+                    const row = employeeRatesTableBody.insertRow();
+                    
+                    // New: Icon cell
+                    const iconCell = row.insertCell();
+                    const editIcon = document.createElement('span');
+                    editIcon.classList.add('edit-icon-circle');
+                    editIcon.innerHTML = '<i class="fas fa-pencil-alt"></i>'; // Pencil icon
+                    editIcon.addEventListener('click', () => openEditEmployeeRateModal(user.id, user.name, account.id, account.name, defaultPrice, customPrice, customRateDocId));
+                    iconCell.appendChild(editIcon);
+
+                    // Employee Name (span rows if multiple accounts for same user)
+                    if (isFirstRowForUser) {
+                        const cell = row.insertCell();
+                        cell.textContent = user.name;
+                        cell.rowSpan = accountsWorkedOn.length; // Span for all accounts this user worked on
+                        isFirstRowForUser = false;
+                    }
+
+                    row.insertCell().textContent = account.name;
+                    row.insertCell().textContent = formatNumberToEnglish(defaultPrice.toFixed(2));
+                    
+                    const customPriceCell = row.insertCell();
+                    customPriceCell.textContent = customPrice !== null ? formatNumberToEnglish(customPrice.toFixed(2)) : getTranslatedText('notSet');
+
+                    // Removed actionsCell and modifyBtn
+
+                    // New: Account Total Time (HH:MM:SS format with tooltip for minutes:seconds)
+                    const accountTotalMinutes = userData.workedAccounts.get(account.id) || 0;
+                    const accountTotalTimeCell = row.insertCell();
+                    accountTotalTimeCell.textContent = formatNumberToEnglish(formatTotalMinutesToHHMMSS(accountTotalMinutes));
+                    accountTotalTimeCell.title = `${formatNumberToEnglish(accountTotalMinutes.toFixed(2))} ${getTranslatedText('minutesUnit')}`; // Tooltip with total minutes
+
+                    // New: Account Balance
+                    const accountBalanceCell = row.insertCell();
+                    const accountPricePerHour = customPrice !== null ? customPrice : defaultPrice;
+                    const accountBalance = (accountTotalMinutes / 60) * accountPricePerHour;
+                    accountBalanceCell.textContent = `${formatNumberToEnglish(accountBalance.toFixed(2))} ${getTranslatedText('currencyUnit')}`;
+
+
+                    // Total Hours and Total Balance (only for the first row of each user)
+                    if (accountsWorkedOn.indexOf(account) === 0) { // This condition ensures it's the first row of the first account displayed for the user
+                        const totalHoursCell = row.insertCell();
+                        totalHoursCell.textContent = formatNumberToEnglish(userData.totalHours.toFixed(2));
+                        totalHoursCell.rowSpan = accountsWorkedOn.length;
+
+                        const totalBalanceCell = row.insertCell();
+                        totalBalanceCell.textContent = `${formatNumberToEnglish(userData.totalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')}`;
+                        totalBalanceCell.rowSpan = accountsWorkedOn.length;
+                    }
+                });
+            }
+        });
+
     } catch (error) {
-        console.error("Error deleting work record:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     } finally {
         showLoadingIndicator(false);
     }
 };
 
-/**
- * يحسب ويعرض إجماليات ساعات العمل والرصيد لكل موظف ولكل حساب.
- */
-const renderEmployeeRatesAndTotals = () => {
-    if (!employeeRatesTableBody) return;
-    employeeRatesTableBody.innerHTML = '';
+const openEditEmployeeRateModal = (userId, userName, accountId, accountName, defaultPrice, customPrice, customRateDocId) => {
+    currentEditingRate = { userId, accountId, docId: customRateDocId };
 
-    const employeeAccountTotals = {}; // { employeeId: { accountId: { totalTime: 0, totalBalance: 0 } } }
-    // const employeeOverallTotals = {}; // { employeeId: { totalHours: 0, totalBalance: 0 } } // تم حسابها مباشرة
+    clearInputError(modalCustomPriceInput, modalCustomPriceInputError);
 
-    allUsers.forEach(user => {
-        employeeAccountTotals[user.id] = {};
-        // employeeOverallTotals[user.id] = { totalHours: 0, totalBalance: 0 };
-    });
+    modalEmployeeName.textContent = userName;
+    modalAccountName.textContent = accountName;
+    modalDefaultPrice.textContent = formatNumberToEnglish(defaultPrice.toFixed(2));
+    modalCustomPriceInput.value = customPrice !== null ? formatNumberToEnglish(customPrice) : formatNumberToEnglish(defaultPrice); // Pre-fill with custom or default
 
-    allWorkRecords.forEach(record => {
-        const employeeId = record.userId;
-        const accountId = record.accountId;
-        const totalTimeMinutes = record.totalTimeMinutes;
-
-        if (!employeeAccountTotals[employeeId]) { // Ensure employee entry exists
-            employeeAccountTotals[employeeId] = {};
-        }
-        if (!employeeAccountTotals[employeeId][accountId]) {
-            employeeAccountTotals[employeeId][accountId] = { totalTime: 0, totalBalance: 0 };
-        }
-        employeeAccountTotals[employeeId][accountId].totalTime += totalTimeMinutes;
-
-        const account = allAccounts.find(acc => acc.id === accountId);
-        if (account) {
-            const customRate = allEmployeeRates.find(rate =>
-                rate.employeeId === employeeId && rate.accountId === accountId
-            );
-            const pricePerHour = customRate ? parseFloat(customRate.customPrice) : parseFloat(account.defaultPrice);
-            if (!isNaN(pricePerHour)) {
-                employeeAccountTotals[employeeId][accountId].totalBalance += (totalTimeMinutes / 60) * pricePerHour;
-            }
-        }
-    });
-
-    // ملء الجدول
-    allUsers.forEach(user => {
-        let firstRowForUser = true;
-        const accountsWorkedOn = Object.keys(employeeAccountTotals[user.id] || {}); // Handle case where user has no records
-
-        // Calculate overall totals for the user before rendering rows
-        let userTotalHours = 0;
-        let userTotalBalance = 0;
-        accountsWorkedOn.forEach(accountId => {
-            const accountData = employeeAccountTotals[user.id][accountId];
-            userTotalHours += accountData.totalTime / 60;
-            userTotalBalance += accountData.totalBalance;
-        });
-        // employeeOverallTotals[user.id].totalHours = userTotalHours;
-        // employeeOverallTotals[user.id].totalBalance = userTotalBalance;
-
-
-        if (accountsWorkedOn.length === 0) {
-            // إذا لم يعمل الموظف على أي حساب
-            const row = employeeRatesTableBody.insertRow();
-            row.innerHTML = `
-                <td></td>
-                <td>${user.name}</td>
-                <td>${getTranslatedText('noDataAvailable')}</td>
-                <td>-</td>
-                <td>-</td>
-                <td>-</td>
-                <td>-</td>
-                <td>${formatNumberToEnglish(0)} ${getTranslatedText('hoursUnit')}</td>
-                <td>${formatNumberToEnglish(0)} ${getTranslatedText('currencyUnit')}</td>
-            `;
-            return;
-        }
-
-        accountsWorkedOn.forEach(accountId => {
-            const account = allAccounts.find(acc => acc.id === accountId);
-            const accountData = employeeAccountTotals[user.id][accountId];
-            const customRate = allEmployeeRates.find(rate =>
-                rate.employeeId === user.id && rate.accountId === accountId
-            );
-
-            const row = employeeRatesTableBody.insertRow();
-            row.innerHTML = `
-                <td>
-                    <button class="edit-icon-circle admin-action-btntp" data-employee-id="${user.id}" data-account-id="${accountId}">
-                        <i class="fas fa-dollar-sign"></i>
-                    </button>
-                </td>
-                <td>${firstRowForUser ? user.name : ''}</td>
-                <td>${account ? account.name : 'N/A'}</td>
-                <td>${account ? formatNumberToEnglish(parseFloat(account.defaultPrice).toFixed(2)) : 'N/A'}</td>
-                <td>${customRate ? formatNumberToEnglish(parseFloat(customRate.customPrice).toFixed(2)) : getTranslatedText('defaultPriceLabel')}</td>
-                <td>${formatTotalMinutesToHHMMSS(accountData.totalTime)}</td>
-                <td>${formatNumberToEnglish(accountData.totalBalance.toFixed(2))}</td>
-                <td>${firstRowForUser ? formatNumberToEnglish(userTotalHours.toFixed(2)) + ' ' + getTranslatedText('hoursUnit') : ''}</td>
-                <td>${firstRowForUser ? formatNumberToEnglish(userTotalBalance.toFixed(2)) + ' ' + getTranslatedText('currencyUnit') : ''}</td>
-            `;
-            firstRowForUser = false;
-        });
-    });
-
-    // إضافة مستمعي الأحداث لأيقونات التعديل
-    employeeRatesTableBody.querySelectorAll('.edit-icon-circle').forEach(button => {
-        button.addEventListener('click', (e) => {
-            const employeeId = e.currentTarget.dataset.employeeId;
-            const accountId = e.currentTarget.dataset.accountId;
-            openEditEmployeeRateModal(employeeId, accountId);
-        });
-    });
-};
-
-/**
- * يفتح نافذة تعديل السعر المخصص للموظف المنبثقة ويملأها بالبيانات.
- * @param {string} employeeId - معرف الموظف.
- * @param {string} accountId - معرف الحساب.
- */
-const openEditEmployeeRateModal = (employeeId, accountId) => {
-    if (!editEmployeeRateModal || !modalEmployeeName || !modalAccountName || !modalDefaultPrice || !modalCustomPriceInput) {
-        console.warn("Edit employee rate modal elements not found.");
-        return;
-    }
-    const employee = allUsers.find(u => u.id === employeeId);
-    const account = allAccounts.find(acc => acc.id === accountId);
-    const customRate = allEmployeeRates.find(rate =>
-        rate.employeeId === employeeId && rate.accountId === accountId
-    );
-
-    if (!employee || !account) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        return;
-    }
-
-    modalEmployeeName.textContent = employee.name;
-    modalAccountName.textContent = account.name;
-    modalDefaultPrice.textContent = formatNumberToEnglish(parseFloat(account.defaultPrice).toFixed(2)) + ' ' + getTranslatedText('currencyUnit');
-    modalCustomPriceInput.value = customRate ? parseFloat(customRate.customPrice).toFixed(2) : '';
-
-    currentEditingRate = { employeeId, accountId, customRateId: customRate ? customRate.id : null };
     editEmployeeRateModal.style.display = 'flex';
 };
 
-/**
- * يحفظ السعر المخصص للموظف إلى Firestore.
- */
-const saveCustomRate = async () => {
-    if (!currentEditingRate) return;
-    if (!db) {
-        showToastMessage(getTranslatedText('error'), 'error');
-        console.error("Firestore is not initialized. Cannot save custom rate.");
-        return;
-    }
-
+const saveCustomRate = async () => { // Renamed for clarity
     const customPrice = parseFloat(modalCustomPriceInput.value);
 
+    clearInputError(modalCustomPriceInput, modalCustomPriceInputError);
+
+    let isValid = true;
     if (isNaN(customPrice) || customPrice < 0) {
-        showToastMessage(getTranslatedText('fillAllFields'), 'error');
+        showInputError(modalCustomPriceInput, modalCustomPriceInputError, 'invalidPrice');
+        isValid = false;
+    }
+
+    if (!isValid) {
+        showToastMessage(getTranslatedText('invalidPrice'), 'error');
         return;
     }
 
     showLoadingIndicator(true);
+    saveCustomRateBtn.disabled = true;
+    saveCustomRateBtn.textContent = getTranslatedText('updating');
     try {
-        if (currentEditingRate.customRateId) {
-            // تحديث السعر المخصص الموجود
-            await updateDoc(doc(db, `artifacts/${appId}/public/data/employeeCustomRates`, currentEditingRate.customRateId), {
-                customPrice: customPrice
-            });
+        const rateData = {
+            userId: currentEditingRate.userId,
+            accountId: currentEditingRate.accountId,
+            customPricePerHour: customPrice,
+            timestamp: serverTimestamp() // Use server timestamp for creation/update time
+        };
+
+        if (currentEditingRate.docId) {
+            // Update existing custom rate
+            const docRef = doc(db, 'userAccountRates', currentEditingRate.docId);
+            await updateDoc(docRef, rateData);
         } else {
-            // إضافة سعر مخصص جديد
-            await addDoc(collection(db, `artifacts/${appId}/public/data/employeeCustomRates`), {
-                employeeId: currentEditingRate.employeeId,
-                accountId: currentEditingRate.accountId,
-                customPrice: customPrice,
-                createdAt: serverTimestamp()
-            });
+            // Add new custom rate
+            const newDocRef = await addDoc(collection(db, 'userAccountRates'), rateData);
+            currentEditingRate.docId = newDocRef.id; // Store the new doc ID
         }
-        showToastMessage(getTranslatedText('customRateSaved'), 'success');
+
+        showToastMessage(getTranslatedText('rateUpdated'), 'success');
         editEmployeeRateModal.style.display = 'none';
-        currentEditingRate = null;
+        await renderEmployeeRatesAndTotals(); // Refresh the table
+        // Also update the main dashboard total balance if the logged-in user is affected
+        if (loggedInUser && loggedInUser.id === currentEditingRate.userId) {
+            await renderMainDashboard();
+        }
     } catch (error) {
-        console.error("Error saving custom rate:", error);
-        showToastMessage(getTranslatedText('error'), 'error');
+        showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     } finally {
         showLoadingIndicator(false);
+        saveCustomRateBtn.disabled = false;
+        saveCustomRateBtn.textContent = getTranslatedText('saveChangesBtn');
     }
 };
 
+// Event listener for closing the custom rate modal
+editEmployeeRateModal.querySelector('.close-button').addEventListener('click', () => {
+    editEmployeeRateModal.style.display = 'none';
+    currentEditingRate = { userId: null, accountId: null, docId: null };
+    clearInputError(modalCustomPriceInput, modalCustomPriceInputError);
+});
 
-// 12. مستمعي الأحداث الأولية
-document.addEventListener('DOMContentLoaded', async () => {
-    // المصادقة الأولية
-    // تأكد من تهيئة Firebase SDK قبل محاولة المصادقة
-    if (auth) {
-        onAuthStateChanged(auth, async (user) => {
-            if (!isAuthReady) { // تأكد من التشغيل مرة واحدة فقط عند التهيئة الأولية
-                if (user) {
-                    userId = user.uid;
-                    console.log("Firebase Auth Ready. User ID:", userId);
-                } else {
-                    // إذا لم يكن هناك مستخدم مصادق عليه، قم بتسجيل الدخول بشكل مجهول
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                        userId = auth.currentUser?.uid || crypto.randomUUID(); // استخدم uid إذا تم تسجيل الدخول، وإلا فمعرف عشوائي
-                        console.log("Signed in anonymously or with custom token. User ID:", userId);
-                    } catch (error) {
-                        console.error("Error during anonymous sign-in:", error);
-                        showToastMessage(getTranslatedText('error'), 'error');
-                    }
-                }
-                isAuthReady = true; // تعيين العلامة بعد اكتمال المصادقة الأولية
-                await loadSession(); // حمل الجلسة بعد أن تصبح المصادقة جاهزة
-            }
-        });
-    } else {
-        console.error("Firebase Auth SDK لم يتم تهيئته. لن تعمل المصادقة.");
-        showToastMessage("خطأ في تهيئة المصادقة. يرجى التحقق من وحدة التحكم.", "error");
-        showPage(loginPage); // عرض صفحة تسجيل الدخول حتى لو لم تتم المصادقة
+window.addEventListener('click', (event) => {
+    if (event.target === editEmployeeRateModal) {
+        editEmployeeRateModal.style.display = 'none';
+        currentEditingRate = { userId: null, accountId: null, docId: null };
+        clearInputError(modalCustomPriceInput, modalCustomPriceInputError);
     }
+});
 
 
-    // 10. الإعداد الأولي عند تحميل DOM
-    checkConnectionStatus(); // التحقق من حالة الاتصال عند التحميل
-    loadDarkModePreference(); // تحميل تفضيل الوضع الداكن
+// --- Event Listeners ---
 
-    // تعيين اللغة الأولية وتطبيق الترجمات
-    setLanguage(currentLanguage);
+document.addEventListener('DOMContentLoaded', async () => {
+    checkConnectionStatus();
+    loadDarkModePreference();
+    setLanguage(currentLanguage); // Apply initial language translations
 
-    // مستمعي أحداث حقول الـ PIN
-    pinInputFields.forEach((input, index) => {
+    // Login PIN inputs logic
+    pinInputs.forEach((input, index) => {
         input.addEventListener('input', () => {
-            if (input.value.length === 1 && index < pinInputFields.length - 1) {
-                pinInputFields[index + 1].focus();
+            // Allow only digits
+            input.value = input.value.replace(/\D/g, ''); 
+            if (input.value.length === 1 && index < pinInputs.length - 1) {
+                pinInputs[index + 1].focus();
+            }
+            // Check if all 8 digits are entered
+            if (pinInputs.every(i => i.value.length === 1)) {
+                const fullPin = pinInputs.map(i => i.value).join('');
+                if (fullPin.length === 8) { // Double check length before attempting login
+                    handleLogin();
+                }
             }
         });
+
         input.addEventListener('keydown', (event) => {
             if (event.key === 'Backspace' && input.value.length === 0 && index > 0) {
-                pinInputFields[index - 1].focus();
-            } else if (event.key === 'Enter') {
-                handleLogin();
+                pinInputs[index - 1].focus();
             }
         });
     });
 
-    // مستمعي أحداث أزرار اللغة
+    // Event listeners for the new login error modal
+    closeLoginErrorModalBtn.addEventListener('click', () => {
+        loginErrorModal.style.display = 'none';
+    });
+    loginErrorModalCloseBtn.addEventListener('click', () => {
+        loginErrorModal.style.display = 'none';
+    });
+    window.addEventListener('click', (event) => {
+        if (event.target === loginErrorModal) {
+            loginErrorModal.style.display = 'none';
+        }
+    });
+
+    // Check for logged-in user on load
+    const storedUser = localStorage.getItem('loggedInUser');
+    if (storedUser) {
+        try {
+            loggedInUser = JSON.parse(storedUser);
+            // Re-fetch all static data to ensure it's up-to-date after session load
+            await fetchAllStaticData();
+            if (loggedInUser.id === 'admin') {
+                showPage(adminPanelPage);
+                await renderAdminPanel();
+            } else {
+                showPage(mainDashboard);
+                await renderMainDashboard();
+            }
+        } catch (error) {
+            logout(); // Log out if stored user data is corrupted
+        }
+    } else {
+        showPage(loginPage);
+        pinInputs[0].focus(); // Focus on the first PIN input
+    }
+
+    // Main Dashboard Buttons
+    logoutDashboardBtn.addEventListener('click', logout);
+    startWorkOptionBtn.addEventListener('click', handleStartWorkOptionClick); // Use named function
+    trackWorkOptionBtn.addEventListener('click', handleTrackWorkOptionClick); // Use named function
+
+    // Add Admin Panel button dynamically if not already present, and only for admin
+    adminPanelButton = document.getElementById('adminPanelOption');
+    if (!adminPanelButton) { // Only create if it doesn't exist
+        adminPanelButton = document.createElement('button');
+        adminPanelButton.id = 'adminPanelOption';
+        adminPanelButton.classList.add('big-option-btn');
+        adminPanelButton.setAttribute('data-key', 'adminPanelTitle'); // For translation
+        adminPanelButton.textContent = getTranslatedText('adminPanelTitle'); // Initial text
+        mainDashboard.querySelector('.dashboard-options').appendChild(adminPanelButton);
+    }
+    // Hide/show admin button based on loggedInUser role
+    if (loggedInUser && loggedInUser.id === 'admin') {
+        adminPanelButton.style.display = 'block'; // Or 'flex' depending on parent display
+    } else {
+        adminPanelButton.style.display = 'none';
+    }
+    adminPanelButton.addEventListener('click', async () => {
+        if (loggedInUser && loggedInUser.id === 'admin') {
+            showPage(adminPanelPage);
+            await renderAdminPanel();
+        } else {
+            showToastMessage(getTranslatedText('unauthorizedAccess'), 'error');
+        }
+    });
+
+
+    // Start Work Page Buttons
+    confirmSelectionBtn.addEventListener('click', handleConfirmSelection);
+    backToDashboardFromPopup.addEventListener('click', () => {
+        if (currentSessionTasks.length > 0) {
+            showConfirmationModal(getTranslatedText('unsavedTasksWarning'), () => {
+                currentSessionTasks = [];
+                showPage(mainDashboard);
+            }, () => {
+                // Do nothing if cancelled
+            });
+        } else {
+            showPage(mainDashboard);
+        }
+    });
+    saveWorkBtn.addEventListener('click', saveWorkRecord);
+    backToDashboardFromStartWork.addEventListener('click', () => {
+        if (currentSessionTasks.length > 0) {
+            showConfirmationModal(getTranslatedText('unsavedTasksWarning'), () => {
+                currentSessionTasks = [];
+                showPage(mainDashboard);
+            }, () => {
+                // Do nothing if cancelled
+            });
+        } else {
+            showPage(mainDashboard);
+        }
+    });
+
+    // Track Work Page Buttons
+    backToDashboardFromTrackBtn.addEventListener('click', () => {
+        showPage(mainDashboard);
+    });
+
+    // Admin Panel Buttons
+    addUserBtn.addEventListener('click', addUser);
+    addAccountBtn.addEventListener('click', addAccount);
+    addTimingFieldBtn.addEventListener('click', addTimingField); 
+    addTaskDefinitionBtn.addEventListener('click', addTaskDefinition);
+    filterRecordsBtn.addEventListener('click', async () => {
+        const selectedUserId = recordFilterUser.value === "" ? null : recordFilterUser.value;
+        const selectedDate = recordFilterDate.value === "" ? null : recordFilterDate.value;
+        const selectedAccountId = recordFilterAccount.value === "" ? null : recordFilterAccount.value; // New filter value
+        const selectedTaskDefinitionId = recordFilterTask.value === "" ? null : recordFilterTask.value; // New filter value
+        showLoadingIndicator(true);
+        try {
+            await loadAndDisplayWorkRecords(selectedUserId, selectedDate, selectedAccountId, selectedTaskDefinitionId);
+        } finally {
+            showLoadingIndicator(false);
+        }
+    });
+    logoutAdminBtn.addEventListener('click', logout);
+
+    // Edit Record Modal
+    if (closeEditRecordModalBtn) {
+        closeEditRecordModalBtn.addEventListener('click', () => {
+            editRecordModal.style.display = 'none';
+            // Clear errors on close
+            clearInputError(editAccountSelect, editAccountSelectError);
+            clearInputError(editTaskTypeSelect, editTaskTypeSelectError);
+            clearInputError(editTotalTasksCount, editTotalTasksCountError);
+            clearInputError(editTotalTime, editTotalTimeError);
+            clearInputError(editRecordDate, editRecordDateError);
+            clearInputError(editRecordTime, editRecordTimeError);
+        });
+    }
+    saveEditedRecordBtn.addEventListener('click', saveEditedRecord);
+
+    // Edit Employee Rate Modal
+    if (editEmployeeRateModal) {
+        editEmployeeRateModal.querySelector('.close-button').addEventListener('click', () => {
+            editEmployeeRateModal.style.display = 'none';
+            clearInputError(modalCustomPriceInput, modalCustomPriceInputError);
+        });
+    }
+    saveCustomRateBtn.addEventListener('click', saveCustomRate);
+
+
+    // Connection Status Events
+    window.addEventListener('online', () => {
+        showToastMessage(getTranslatedText('internetRestored'), 'success');
+    });
+    window.addEventListener('offline', () => {
+        showToastMessage(getTranslatedText('internetLost'), 'error');
+    });
+
+    // Language and Dark Mode buttons
     if (langArBtn) {
         langArBtn.addEventListener('click', () => {
             setLanguage('ar');
@@ -2275,199 +2775,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             langArBtn.classList.remove('active');
         });
     }
-
-    // مستمع حدث زر تبديل الوضع الداكن
     if (darkModeToggle) {
         darkModeToggle.addEventListener('click', toggleDarkMode);
-    }
-
-    // مستمعي أحداث تغيير حالة الاتصال
-    window.addEventListener('online', () => {
-        showToastMessage(getTranslatedText('internetRestored'), 'success');
-    });
-    window.addEventListener('offline', () => {
-        showToastMessage(getTranslatedText('internetLost'), 'error');
-    });
-
-    // مستمعي أحداث تسجيل الدخول
-    // لم يعد هناك زر تسجيل دخول صريح، يتم التعامل مع Enter في حقول الـ PIN
-    if (loginErrorModalCloseBtn) {
-        loginErrorModalCloseBtn.addEventListener('click', () => loginErrorModal.style.display = 'none');
-    }
-    if (closeLoginErrorModalBtn) {
-        closeLoginErrorModalBtn.addEventListener('click', () => loginErrorModal.style.display = 'none');
-    }
-
-    // مستمعي أحداث لوحة التحكم الرئيسية
-    if (startWorkOptionBtn) startWorkOptionBtn.addEventListener('click', () => {
-        showPage(startWorkPage);
-        fetchAccountsAndTasks();
-        if (taskSelectionPopup) taskSelectionPopup.style.display = 'flex'; // التأكد من إظهار نافذة الاختيار
-        if (taskDetailsContainer) taskDetailsContainer.style.display = 'none'; // إخفاء تفاصيل المهمة
-    });
-    if (trackWorkOptionBtn) trackWorkOptionBtn.addEventListener('click', () => {
-        showPage(trackWorkPage);
-        renderTrackWorkPage(loggedInUser);
-    });
-    if (logoutDashboardBtn) logoutDashboardBtn.addEventListener('click', logout);
-
-    // مستمعي أحداث صفحة بدء العمل
-    if (confirmSelectionBtn) confirmSelectionBtn.addEventListener('click', handleConfirmSelection);
-    if (backToDashboardFromPopupBtn) backToDashboardFromPopupBtn.addEventListener('click', () => {
-        if (currentSessionTasks.length > 0 && !isSavingWork) {
-            // استخدام نافذة منبثقة مخصصة بدلاً من confirm
-            const confirmDiscard = new Promise(resolve => {
-                const modal = document.createElement('div');
-                modal.classList.add('modal');
-                modal.innerHTML = `
-                    <div class="modal-content">
-                        <span class="close-button">&times;</span>
-                        <h3>${getTranslatedText('unsavedTasksWarning')}</h3>
-                        <button id="confirmDiscardBtn" class="save-work-btn">${getTranslatedText('backToDashboard')}</button>
-                        <button id="cancelDiscardBtn" class="back-btn">${getTranslatedText('close')}</button>
-                    </div>
-                `;
-                document.body.appendChild(modal);
-                modal.style.display = 'flex';
-
-                modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
-                modal.querySelector('#cancelDiscardBtn').onclick = () => { modal.remove(); resolve(false); };
-                modal.querySelector('#confirmDiscardBtn').onclick = () => { modal.remove(); resolve(true); };
-            });
-
-            confirmDiscard.then(result => {
-                if (result) {
-                    currentSessionTasks = [];
-                    showPage(mainDashboard);
-                }
-            });
-        } else {
-            showPage(mainDashboard);
-        }
-    });
-    if (saveWorkBtn) saveWorkBtn.addEventListener('click', saveWorkRecord);
-    if (backToDashboardFromStartWorkBtn) backToDashboardFromStartWorkBtn.addEventListener('click', () => {
-        if (currentSessionTasks.length > 0 && !isSavingWork) {
-            // استخدام نافذة منبثقة مخصصة بدلاً من confirm
-            const confirmDiscard = new Promise(resolve => {
-                const modal = document.createElement('div');
-                modal.classList.add('modal');
-                modal.innerHTML = `
-                    <div class="modal-content">
-                        <span class="close-button">&times;</span>
-                        <h3>${getTranslatedText('unsavedTasksWarning')}</h3>
-                        <button id="confirmDiscardBtn" class="save-work-btn">${getTranslatedText('backToDashboard')}</button>
-                        <button id="cancelDiscardBtn" class="back-btn">${getTranslatedText('close')}</button>
-                    </div>
-                `;
-                document.body.appendChild(modal);
-                modal.style.display = 'flex';
-
-                modal.querySelector('.close-button').onclick = () => { modal.remove(); resolve(false); };
-                modal.querySelector('#cancelDiscardBtn').onclick = () => { modal.remove(); resolve(false); };
-                modal.querySelector('#confirmDiscardBtn').onclick = () => { modal.remove(); resolve(true); };
-            });
-
-            confirmDiscard.then(result => {
-                if (result) {
-                    currentSessionTasks = [];
-                    showPage(mainDashboard);
-                }
-            });
-        } else {
-            showPage(mainDashboard);
-        }
-    });
-
-    // مستمعي أحداث صفحة متابعة العمل
-    if (backToDashboardFromTrackBtn) backToDashboardFromTrackBtn.addEventListener('click', () => showPage(mainDashboard));
-
-    // مستمعي أحداث لوحة تحكم المدير
-    if (addUserBtn) addUserBtn.addEventListener('click', addUser);
-    if (addAccountBtn) addAccountBtn.addEventListener('click', addAccount);
-    if (addTimingFieldBtn) addTimingFieldBtn.addEventListener('click', addTimingField);
-    if (addTaskDefinitionBtn) addTaskDefinitionBtn.addEventListener('click', addTaskDefinition);
-    if (filterRecordsBtn) filterRecordsBtn.addEventListener('click', async () => {
-        const selectedUserId = recordFilterUser.value === "" ? null : recordFilterUser.value;
-        const selectedDate = recordFilterDate.value === "" ? null : recordFilterDate.value;
-        showLoadingIndicator(true);
-        try {
-            await loadAndDisplayWorkRecords(selectedUserId, selectedDate);
-        } finally {
-            showLoadingIndicator(false);
-        }
-    });
-    if (logoutAdminBtn) logoutAdminBtn.addEventListener('click', logout);
-
-    // مستمعي أحداث جداول المدير (للحذف والتعديل)
-    if (usersTableBody) {
-        usersTableBody.addEventListener('click', (e) => {
-            if (e.target.closest('.admin-action-btn.delete')) {
-                const userIdToDelete = e.target.closest('.admin-action-btn.delete').dataset.id;
-                deleteUser(userIdToDelete);
-            }
-        });
-    }
-    if (accountsTableBody) {
-        accountsTableBody.addEventListener('click', (e) => {
-            if (e.target.closest('.admin-action-btn.delete')) {
-                const accountIdToDelete = e.target.closest('.admin-action-btn.delete').dataset.id;
-                deleteAccount(accountIdToDelete);
-            }
-        });
-    }
-    if (tasksDefinitionTableBody) {
-        tasksDefinitionTableBody.addEventListener('click', (e) => {
-            if (e.target.closest('.admin-action-btn.delete')) {
-                const taskDefinitionIdToDelete = e.target.closest('.admin-action-btn.delete').dataset.id;
-                deleteTaskDefinition(taskDefinitionIdToDelete);
-            }
-        });
-    }
-    if (workRecordsTableBody) {
-        workRecordsTableBody.addEventListener('click', (e) => {
-            const deleteButton = e.target.closest('.admin-action-btn.delete');
-            const editButton = e.target.closest('.admin-action-btn.edit');
-
-            if (deleteButton && deleteButton.dataset.type === 'record') {
-                const recordIdToDelete = deleteButton.dataset.id;
-                deleteWorkRecord(recordIdToDelete);
-            } else if (editButton && editButton.dataset.type === 'record') {
-                const recordIdToEdit = editButton.dataset.id;
-                const record = allWorkRecords.find(rec => rec.id === recordIdToEdit);
-                if (record) {
-                    openEditRecordModal(record);
-                }
-            }
-        });
-    }
-
-    // مستمعي أحداث نافذة تعديل السجل المنبثقة
-    if (closeEditRecordModalBtn) {
-        closeEditRecordModalBtn.addEventListener('click', () => editRecordModal.style.display = 'none');
-    }
-    if (saveEditedRecordBtn) {
-        saveEditedRecordBtn.addEventListener('click', saveEditedRecord);
-    }
-
-    // مستمعي أحداث نافذة تعديل السعر المخصص للموظف
-    if (editEmployeeRateModal) {
-        editEmployeeRateModal.querySelector('.close-button').addEventListener('click', () => editEmployeeRateModal.style.display = 'none');
-    }
-    if (saveCustomRateBtn) {
-        saveCustomRateBtn.addEventListener('click', saveCustomRate);
-    }
-
-    // منع تحذير قبل الإغلاق إذا كان العمل محفوظًا
-    window.addEventListener('beforeunload', (event) => {
-        if (currentSessionTasks.length > 0 && !isSavingWork) {
-            event.preventDefault();
-            event.returnValue = ''; // مطلوب لبعض المتصفحات
-        }
-    });
-
-    // إضافة حقل توقيت افتراضي عند تحميل صفحة المهام
-    if (newTimingsContainer && newTimingsContainer.children.length === 0) {
-        addTimingField();
     }
 });
