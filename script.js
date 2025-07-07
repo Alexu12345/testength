@@ -457,7 +457,7 @@ const translations = {
         'filterBtn': 'تصفية',
         'noMatchingRecords': 'لا توجد سجلات عمل مطابقة.',
         'userColumn': 'المستخدم',
-        'dateColumn': 'التاريخ',
+        'dateColumn': 'التاريخ', 
         'timeColumn': 'الوقت', 
         'confirmDeleteRecord': 'هل أنت متأكد من حذف هذا السجل للمستخدم {name}؟',
         'recordDeletedSuccess': 'تم حذف السجل بنجاح.',
@@ -614,7 +614,7 @@ const translations = {
         'filterBtn': 'Filter',
         'noMatchingRecords': 'No matching work records.',
         'userColumn': 'User',
-        'dateColumn': 'Date',
+        'dateColumn': 'Date', 
         'timeColumn': 'Time', 
         'confirmDeleteRecord': 'Are you sure you want to delete this record for user {name}?',
         'recordDeletedSuccess': 'Record deleted successfully.',
@@ -1706,7 +1706,7 @@ const renderTrackWorkPage = async () => {
         if (error.code === 'failed-precondition' && error.message.includes('The query requires an index')) {
             showToastMessage(`Error: Firestore index missing. ${error.message}`, 'error');
         } else {
-            showToastMessage(getTranslatedText('errorLoadingRecords'), 'error');
+            showToastMessage(`${getTranslatedText('errorLoadingRecords')}: ${error.message}`, 'error'); // Display actual error message for debugging
         }
     } finally {
         showLoadingIndicator(false);
