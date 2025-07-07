@@ -30,6 +30,9 @@ let lastClickTime = null; // For "time between clicks" feature
 // Constants
 const SESSION_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours in milliseconds
 const SESSION_CLOSED_BROWSER_MS = 1 * 60 * 60 * 1000; // 1 hour if browser closed
+const USER_ONLINE_THRESHOLD_MS = 60 * 1000; // 1 minute for "online now"
+const USER_RECENTLY_ONLINE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour for "online X minutes ago"
+const RECORDS_PER_PAGE = 50; // Number of records to load per click
 
 // DOM Elements
 const loginPage = document.getElementById('loginPage');
@@ -109,6 +112,10 @@ const recordFilterAccount = document.getElementById('recordFilterAccount'); // N
 const recordFilterTask = document.getElementById('recordFilterTask'); // New filter
 const filterRecordsBtn = document.getElementById('filterRecordsBtn');
 const workRecordsTableBody = document.getElementById('workRecordsTableBody');
+const loadMoreRecordsBtn = document.getElementById('loadMoreRecordsBtn'); // New: Load More button
+const loadAllRecordsBtn = document.getElementById('loadAllRecordsBtn'); // New: Load All button
+let lastVisibleRecord = null; // For pagination: stores the last document from the previous fetch
+let allRecordsLoaded = false; // Flag to indicate if all records have been loaded
 
 // Edit Record Modal Elements
 const editRecordModal = document.getElementById('editRecordModal');
@@ -407,6 +414,7 @@ const translations = {
         'currentUsers': 'المستخدمون الحاليون:',
         'nameColumn': 'الاسم',
         'pinColumn': 'PIN',
+        'statusColumn': 'الحالة', // New
         'actionsColumn': 'إجراءات',
         'deleteBtn': 'حذف',
         'confirmDeleteUser': 'هل أنت متأكد من حذف المستخدم {name}؟',
@@ -515,6 +523,12 @@ const translations = {
         'deleting': 'جارٍ الحذف...', // New button text for deleting state
         'adding': 'جارٍ الإضافة...', // New button text for adding state
         'updating': 'جارٍ التحديث...', // New button text for updating state
+        'onlineNow': 'متصل الآن', // New
+        'onlineSince': 'متصل منذ {minutes} دقيقة و {seconds} ثانية', // New
+        'lastActivity': 'آخر نشاط: {date} {time}', // New
+        'loadMoreBtn': 'أعرض أكثر ({count})', // New
+        'loadAllBtn': 'عرض الكل', // New
+        'noTimings': 'لا توقيتات محددة' // New
     },
     'en': {
         'loginTitle': 'Login',
@@ -564,6 +578,7 @@ const translations = {
         'currentUsers': 'Current Users:',
         'nameColumn': 'Name',
         'pinColumn': 'PIN',
+        'statusColumn': 'Status', // New
         'actionsColumn': 'Actions',
         'deleteBtn': 'Delete',
         'confirmDeleteUser': 'Are you sure you want to delete user {name}?',
@@ -672,6 +687,12 @@ const translations = {
         'deleting': 'Deleting...', // New button text for deleting state
         'adding': 'Adding...', // New button text for adding state
         'updating': 'Updating...', // New button text for updating state
+        'onlineNow': 'Online Now', // New
+        'onlineSince': 'Online {minutes} minutes and {seconds} seconds ago', // New
+        'lastActivity': 'Last activity: {date} {time}', // New
+        'loadMoreBtn': 'Show More ({count})', // New
+        'loadAllBtn': 'Show All', // New
+        'noTimings': 'No timings defined' // New
     }
 };
 
@@ -735,6 +756,8 @@ const applyTranslations = () => {
             const durationHours = SESSION_DURATION_MS / (60 * 60 * 1000);
             const closedBrowserDurationHours = SESSION_CLOSED_BROWSER_MS / (60 * 60 * 1000);
             element.textContent = getTranslatedText(key, { duration: `${durationHours} ${getTranslatedText('hoursUnit')}`, closedBrowserDuration: `${closedBrowserDurationHours} ${getTranslatedText('hoursUnit')}` }); // Changed to hoursUnit for consistency
+        } else if (key === 'loadMoreBtn') { // Special handling for load more button count
+            element.textContent = getTranslatedText(key, { count: RECORDS_PER_PAGE });
         }
         else {
             element.textContent = getTranslatedText(key);
@@ -808,7 +831,8 @@ const loadSession = async () => {
             await renderAdminPanel(); // Ensure admin panel is rendered
         } else {
             showPage(mainDashboard); // This will hide loginPage
-            await renderMainDashboard(); // Ensure main dashboard is rendered
+            await renderMainDashboard();
+            trackUserActivity(); // Start tracking activity for regular users
         }
         return true; // Session resumed
     } else {
@@ -932,6 +956,7 @@ const handleLogin = async () => {
                 loggedInUser.role = 'user';
             }
             saveSession(loggedInUser); // Save user session
+            trackUserActivity(); // Start tracking activity for regular users
             showPage(mainDashboard);
             await renderMainDashboard(); // Call renderMainDashboard here after successful login
             pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
@@ -960,6 +985,46 @@ const logout = () => {
     pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
     pinInputs[0].focus(); // Focus on first PIN input
 };
+
+// User Activity Tracking (for "Status" column)
+let activityInterval = null;
+
+const updateLastActivityTimestamp = async () => {
+    if (loggedInUser && loggedInUser.id !== 'admin') {
+        try {
+            const userDocRef = doc(db, 'users', loggedInUser.id);
+            await updateDoc(userDocRef, { lastActivityTimestamp: serverTimestamp() });
+        } catch (error) {
+            // console.error("Error updating last activity timestamp:", error);
+            // Don't show toast for this, as it's a background operation
+        }
+    }
+};
+
+const trackUserActivity = () => {
+    // Clear any existing interval to prevent multiple intervals running
+    if (activityInterval) {
+        clearInterval(activityInterval);
+    }
+
+    // Update immediately on page load/login
+    updateLastActivityTimestamp();
+
+    // Update every 30 seconds while the user is active
+    activityInterval = setInterval(updateLastActivityTimestamp, 30 * 1000); // Every 30 seconds
+
+    // Update on visibility change (tab focus/unfocus)
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            updateLastActivityTimestamp();
+        }
+    });
+
+    // Update on user interaction (e.g., mouse move, key press)
+    document.addEventListener('mousemove', updateLastActivityTimestamp, { passive: true, once: true });
+    document.addEventListener('keypress', updateLastActivityTimestamp, { passive: true, once: true });
+};
+
 
 // 6. Main Dashboard Logic (Updated for dynamic balance calculation)
 const renderMainDashboard = async () => {
@@ -1732,7 +1797,12 @@ const renderAdminPanel = async () => {
         recordFilterUser.value = ''; // Clear user filter (sets to "All Users")
         recordFilterAccount.value = ''; // Clear account filter
         recordFilterTask.value = ''; // Clear task filter
-        await loadAndDisplayWorkRecords(null, null, null, null); // Load all records initially
+        
+        // Initial load of work records with pagination
+        lastVisibleRecord = null; // Reset pagination
+        allRecordsLoaded = false;
+        await loadAndDisplayWorkRecords(null, null, null, null, RECORDS_PER_PAGE); // Load first 50 records
+        
         await renderEmployeeRatesAndTotals(); // New function call
     } catch (error) {
         showToastMessage(getTranslatedText('errorLoadingData'), 'error');
@@ -1749,10 +1819,11 @@ const loadAndDisplayUsers = async () => {
         if (allUsers.length === 0) {
             const row = usersTableBody.insertRow();
             const cell = row.insertCell(0);
-            cell.colSpan = 3;
+            cell.colSpan = 4; // Adjusted colspan for new status column
             cell.textContent = getTranslatedText('noDataToShow');
             cell.style.textAlign = 'center';
         } else {
+            const now = Date.now();
             allUsers.forEach(user => { // Iterate over cached users
                 // Skip rendering admin user in this table
                 if (user.id === 'admin') return;
@@ -1760,6 +1831,39 @@ const loadAndDisplayUsers = async () => {
                 const row = usersTableBody.insertRow();
                 row.insertCell().textContent = user.name;
                 row.insertCell().textContent = formatNumberToEnglish(user.pin);
+                
+                // Status Column Logic
+                const statusCell = row.insertCell();
+                if (user.lastActivityTimestamp) {
+                    const lastActivityTime = user.lastActivityTimestamp.toDate().getTime();
+                    const diffMs = now - lastActivityTime;
+
+                    if (diffMs < USER_ONLINE_THRESHOLD_MS) { // Less than 1 minute
+                        statusCell.textContent = getTranslatedText('onlineNow');
+                        statusCell.style.color = '#2ECC71'; // Green for online
+                    } else if (diffMs < USER_RECENTLY_ONLINE_THRESHOLD_MS) { // Less than 1 hour
+                        const minutes = Math.floor(diffMs / (60 * 1000));
+                        const seconds = Math.floor((diffMs % (60 * 1000)) / 1000);
+                        statusCell.textContent = getTranslatedText('onlineSince', {
+                            minutes: formatNumberToEnglish(minutes),
+                            seconds: formatNumberToEnglish(seconds)
+                        });
+                        statusCell.style.color = '#F39C12'; // Orange for recently online
+                    } else {
+                        const activityDate = new Date(lastActivityTime);
+                        const formattedDate = activityDate.toLocaleDateString(currentLanguage, { day: 'numeric', month: 'short', year: 'numeric' });
+                        const formattedTime = activityDate.toLocaleTimeString(currentLanguage, { hour: '2-digit', minute: '2-digit' });
+                        statusCell.textContent = getTranslatedText('lastActivity', {
+                            date: formattedDate,
+                            time: formattedTime
+                        });
+                        statusCell.style.color = '#E74C3C'; // Red for offline
+                    }
+                } else {
+                    statusCell.textContent = getTranslatedText('notSet'); // If no activity recorded yet
+                    statusCell.style.color = '#95A5A6';
+                }
+
                 const actionCell = row.insertCell();
                 const deleteBtn = document.createElement('button');
                 deleteBtn.textContent = getTranslatedText('deleteBtn');
@@ -1829,7 +1933,7 @@ const addUser = async () => { // Renamed for clarity
             return;
         }
 
-        await addDoc(usersCollectionRef, { name: name, pin: pin, role: 'user' }); 
+        await addDoc(usersCollectionRef, { name: name, pin: pin, role: 'user', lastActivityTimestamp: serverTimestamp() }); // Add lastActivityTimestamp
         showToastMessage(getTranslatedText('userAddedSuccess'), 'success');
         newUserNameInput.value = '';
         newUserPINInput.value = '';
@@ -2033,7 +2137,10 @@ const addTimingField = () => { // Renamed for clarity
 const addTaskDefinition = async () => { // Renamed for clarity
     const name = newTaskNameInput.value.trim();
     clearInputError(newTaskNameInput, newTaskNameInputError);
-    clearInputError(newTimingsContainer.querySelector('.new-task-timing-minutes') || newTimingsContainer, newTimingsInputError); // Clear error for timing inputs
+    // Clear error for all timing inputs
+    newTimingsContainer.querySelectorAll('input').forEach(input => {
+        clearInputError(input, newTimingsInputError); // newTimingsInputError is for the container
+    });
 
     let isValid = true;
     if (!name) {
@@ -2051,13 +2158,19 @@ const addTaskDefinition = async () => { // Renamed for clarity
         const minutes = parseInt(minInput.value);
         const seconds = parseInt(secInput.value);
 
+        // Check if both are empty, then skip this pair (allow empty pairs if not the only input)
+        if (minInput.value === '' && secInput.value === '') {
+            return;
+        }
+
         if (!isNaN(minutes) && minutes >= 0 && !isNaN(seconds) && seconds >= 0 && seconds < 60) {
             const totalMinutes = minutes + (seconds / 60);
             timings.push(totalMinutes);
             hasValidTimings = true;
-        } else if (minInput.value !== '' || secInput.value !== '') {
-            // Only show error if fields are not empty but invalid
+        } else {
+            // If fields are not empty but invalid
             showInputError(minInput, newTimingsInputError, 'invalidTimeInput'); // Point to the first invalid input
+            showInputError(secInput, newTimingsInputError, 'invalidTimeInput');
             isValid = false;
         }
     });
@@ -2137,22 +2250,18 @@ const populateFilters = async () => {
 };
 
 
-const loadAndDisplayWorkRecords = async (userId = null, date = null, accountId = null, taskDefinitionId = null) => {
-    workRecordsTableBody.innerHTML = '';
+const loadAndDisplayWorkRecords = async (userId = null, date = null, accountId = null, taskDefinitionId = null, limitCount = RECORDS_PER_PAGE, append = false) => {
     showLoadingIndicator(true);
     try {
-        const workRecordsCollectionRef = collection(db, 'workRecords'); 
-        let recordsQuery = query(workRecordsCollectionRef, orderBy('timestamp', 'desc')); 
+        let recordsQuery = query(collection(db, 'workRecords'), orderBy('timestamp', 'desc')); 
 
         if (userId) {
             recordsQuery = query(recordsQuery, where('userId', '==', userId)); 
         }
-
-        if (accountId) { // New filter
+        if (accountId) {
             recordsQuery = query(recordsQuery, where('accountId', '==', accountId));
         }
-
-        if (taskDefinitionId) { // New filter
+        if (taskDefinitionId) {
             recordsQuery = query(recordsQuery, where('taskDefinitionId', '==', taskDefinitionId));
         }
 
@@ -2168,97 +2277,169 @@ const loadAndDisplayWorkRecords = async (userId = null, date = null, accountId =
             );
         }
 
+        // Apply pagination
+        if (append && lastVisibleRecord) {
+            recordsQuery = query(recordsQuery, startAfter(lastVisibleRecord));
+        }
+        if (limitCount > 0) { // Apply limit if it's a positive number
+            recordsQuery = query(recordsQuery, limit(limitCount));
+        }
+
         const recordsSnapshot = await getDocs(recordsQuery); 
-        if (recordsSnapshot.empty) {
+
+        if (!append) { // Clear table only if not appending
+            workRecordsTableBody.innerHTML = '';
+        }
+
+        if (recordsSnapshot.empty && !append) { // If no records found and not appending
             const row = workRecordsTableBody.insertRow();
             const cell = row.insertCell(0);
-            cell.colSpan = 6; // Adjusted colspan from 7 to 6
+            cell.colSpan = 6;
             cell.textContent = getTranslatedText('noMatchingRecords');
             cell.style.textAlign = 'center';
-        } else {
-            recordsSnapshot.forEach(documentSnapshot => { 
-                const record = getDocData(documentSnapshot);
-                const row = workRecordsTableBody.insertRow();
-                // Use optional chaining for robustness against missing fields in old records
-                row.insertCell().textContent = record.userName || 'N/A';
-                row.insertCell().textContent = record.accountName || 'N/A';
-                row.insertCell().textContent = record.taskDefinitionName || 'N/A';
-
-                const totalTimeCell = row.insertCell(); // This is now the "إجمالي الوقت (دقيقة)" cell
-                totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(record.totalTime || 0)); // Format total time
-                
-                // Construct tooltip for totalTimeCell
-                const taskCountsByTiming = {};
-                // Ensure record.recordedTimings exists and is an array before iterating
-                if (record.recordedTimings && Array.isArray(record.recordedTimings)) {
-                    record.recordedTimings.forEach(rt => {
-                        // Use total seconds (multiplied by 1000 for precision) as the key for grouping
-                        const timingKey = Math.round((rt.timing || 0) * 1000).toString(); 
-                        taskCountsByTiming[timingKey] = (taskCountsByTiming[timingKey] || 0) + 1;
-                    });
-                }
-
-                const tooltipContent = Object.keys(taskCountsByTiming)
-                    .map(timingKey => { // Renamed to timingKey
-                        const count = taskCountsByTiming[timingKey];
-                        // Convert timingKey back to decimal minutes for display in tooltip
-                        const displayTimingMinutes = parseFloat(timingKey) / 1000;
-                        return getTranslatedText('tasksSummaryTooltip', {
-                            count: formatNumberToEnglish(count),
-                            time: formatNumberToEnglish(formatMinutesToMMSS(displayTimingMinutes))
-                        });
-                    })
-                    .join('\n'); // Join with newline for multi-line tooltip
-
-                totalTimeCell.title = tooltipContent; // Set the tooltip
-
-                row.insertCell().textContent = record.timestamp ? new Date(record.timestamp.toDate()).toLocaleDateString(currentLanguage, { day: 'numeric', month: 'short' }) : 'N/A'; // Format date as "1 May"
-                
-                const actionCell = row.insertCell();
-                const editBtn = document.createElement('button');
-                editBtn.textContent = getTranslatedText('editRecord');
-                editBtn.classList.add('admin-action-btntp'); // Use admin-action-btntp for consistency
-                editBtn.addEventListener('click', () => openEditRecordModal(record));
-                actionCell.appendChild(editBtn);
-
-                const deleteBtn = document.createElement('button');
-                deleteBtn.textContent = getTranslatedText('deleteBtn');
-                deleteBtn.classList.add('admin-action-btntp', 'delete'); // Use admin-action-btntp for consistency
-                deleteBtn.addEventListener('click', () => {
-                    showConfirmationModal(getTranslatedText('confirmDeleteRecord', { name: record.userName || 'N/A' }), async () => {
-                        showLoadingIndicator(true);
-                        deleteBtn.disabled = true;
-                        deleteBtn.textContent = getTranslatedText('deleting');
-                        try {
-                            await deleteDoc(doc(db, 'workRecords', record.id)); 
-                            showToastMessage(getTranslatedText('recordDeletedSuccess'), 'success');
-                            await loadAndDisplayWorkRecords(recordFilterUser.value, recordFilterDate.value, recordFilterAccount.value, recordFilterTask.value); // Reload with current filters
-                            await renderEmployeeRatesAndTotals(); // Update employee rates table
-                        } catch (err) {
-                            showToastMessage(getTranslatedText('errorDeletingRecord'), 'error');
-                        } finally {
-                            showLoadingIndicator(false);
-                            deleteBtn.disabled = false;
-                            deleteBtn.textContent = getTranslatedText('deleteBtn');
-                        }
-                    }, () => {
-                        // Do nothing if cancelled
-                    });
-                });
-                actionCell.appendChild(deleteBtn);
-            });
+            loadMoreRecordsBtn.style.display = 'none';
+            loadAllRecordsBtn.style.display = 'none';
+            allRecordsLoaded = true;
+            return;
         }
+
+        recordsSnapshot.forEach(documentSnapshot => { 
+            const record = getDocData(documentSnapshot);
+            const row = workRecordsTableBody.insertRow();
+            // Use optional chaining for robustness against missing fields in old records
+            row.insertCell().textContent = record.userName || 'N/A';
+            row.insertCell().textContent = record.accountName || 'N/A';
+            row.insertCell().textContent = record.taskDefinitionName || 'N/A';
+
+            const totalTimeCell = row.insertCell();
+            totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(record.totalTime || 0));
+            
+            const taskCountsByTiming = {};
+            if (record.recordedTimings && Array.isArray(record.recordedTimings)) {
+                record.recordedTimings.forEach(rt => {
+                    const timingKey = Math.round((rt.timing || 0) * 1000).toString(); 
+                    taskCountsByTiming[timingKey] = (taskCountsByTiming[timingKey] || 0) + 1;
+                });
+            }
+
+            const tooltipContent = Object.keys(taskCountsByTiming)
+                .map(timingKey => {
+                    const count = taskCountsByTiming[timingKey];
+                    const displayTimingMinutes = parseFloat(timingKey) / 1000;
+                    return getTranslatedText('tasksSummaryTooltip', {
+                        count: formatNumberToEnglish(count),
+                        time: formatNumberToEnglish(formatMinutesToMMSS(displayTimingMinutes))
+                    });
+                })
+                .join('\n');
+
+            totalTimeCell.title = tooltipContent;
+
+            row.insertCell().textContent = record.timestamp ? new Date(record.timestamp.toDate()).toLocaleDateString(currentLanguage, { day: 'numeric', month: 'short' }) : 'N/A';
+            
+            const actionCell = row.insertCell();
+            const editBtn = document.createElement('button');
+            editBtn.textContent = getTranslatedText('editRecord');
+            editBtn.classList.add('admin-action-btntp');
+            editBtn.addEventListener('click', () => openEditRecordModal(record));
+            actionCell.appendChild(editBtn);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = getTranslatedText('deleteBtn');
+            deleteBtn.classList.add('admin-action-btntp', 'delete');
+            deleteBtn.addEventListener('click', () => {
+                showConfirmationModal(getTranslatedText('confirmDeleteRecord', { name: record.userName || 'N/A' }), async () => {
+                    showLoadingIndicator(true);
+                    deleteBtn.disabled = true;
+                    deleteBtn.textContent = getTranslatedText('deleting');
+                    try {
+                        await deleteDoc(doc(db, 'workRecords', record.id)); 
+                        showToastMessage(getTranslatedText('recordDeletedSuccess'), 'success');
+                        // Reload records from scratch after deletion to ensure correct pagination state
+                        lastVisibleRecord = null;
+                        allRecordsLoaded = false;
+                        await loadAndDisplayWorkRecords(recordFilterUser.value, recordFilterDate.value, recordFilterAccount.value, recordFilterTask.value, RECORDS_PER_PAGE);
+                        await renderEmployeeRatesAndTotals();
+                    } catch (err) {
+                        showToastMessage(getTranslatedText('errorDeletingRecord'), 'error');
+                    } finally {
+                        showLoadingIndicator(false);
+                        deleteBtn.disabled = false;
+                        deleteBtn.textContent = getTranslatedText('deleteBtn');
+                    }
+                }, () => {
+                    // Do nothing if cancelled
+                });
+            });
+            actionCell.appendChild(deleteBtn);
+        });
+
+        // Update pagination state
+        if (recordsSnapshot.docs.length < limitCount) {
+            allRecordsLoaded = true;
+            loadMoreRecordsBtn.style.display = 'none';
+            loadAllRecordsBtn.style.display = 'none';
+        } else {
+            lastVisibleRecord = recordsSnapshot.docs[recordsSnapshot.docs.length - 1];
+            loadMoreRecordsBtn.style.display = 'inline-block';
+            loadAllRecordsBtn.style.display = 'inline-block';
+            loadMoreRecordsBtn.textContent = getTranslatedText('loadMoreBtn', { count: RECORDS_PER_PAGE }); // Update button text
+        }
+        // If no records were loaded at all (e.g., after filter), hide buttons
+        if (recordsSnapshot.empty && workRecordsTableBody.rows.length === 0) {
+            loadMoreRecordsBtn.style.display = 'none';
+            loadAllRecordsBtn.style.display = 'none';
+        }
+
     } catch (error) {
-        // More specific error message for Firestore query issues
         if (error.code === 'failed-precondition' && error.message.includes('The query requires an index')) {
             showToastMessage(`Error: Firestore index missing. ${error.message}`, 'error');
         } else {
-            showToastMessage(`${getTranslatedText('errorLoadingRecords')}: ${error.message}`, 'error'); // Display actual error message for debugging
+            showToastMessage(`${getTranslatedText('errorLoadingRecords')}: ${error.message}`, 'error');
         }
     } finally {
         showLoadingIndicator(false);
     }
 };
+
+const handleLoadMoreRecords = async () => {
+    if (allRecordsLoaded) return;
+    loadMoreRecordsBtn.disabled = true;
+    loadMoreRecordsBtn.textContent = getTranslatedText('loading'); // Use a generic loading text
+    await loadAndDisplayWorkRecords(
+        recordFilterUser.value === "" ? null : recordFilterUser.value,
+        recordFilterDate.value === "" ? null : recordFilterDate.value,
+        recordFilterAccount.value === "" ? null : recordFilterAccount.value,
+        recordFilterTask.value === "" ? null : recordFilterTask.value,
+        RECORDS_PER_PAGE,
+        true // Append new records
+    );
+    loadMoreRecordsBtn.disabled = false;
+    loadMoreRecordsBtn.textContent = getTranslatedText('loadMoreBtn', { count: RECORDS_PER_PAGE });
+};
+
+const handleLoadAllRecords = async () => {
+    if (allRecordsLoaded) return;
+    loadAllRecordsBtn.disabled = true;
+    loadAllRecordsBtn.textContent = getTranslatedText('loading'); // Use a generic loading text
+    loadMoreRecordsBtn.disabled = true; // Also disable load more
+    
+    // Fetch all remaining records
+    await loadAndDisplayWorkRecords(
+        recordFilterUser.value === "" ? null : recordFilterUser.value,
+        recordFilterDate.value === "" ? null : recordFilterDate.value,
+        recordFilterAccount.value === "" ? null : recordFilterAccount.value,
+        recordFilterTask.value === "" ? null : recordFilterTask.value,
+        0, // Limit to 0 to fetch all
+        true // Append new records
+    );
+    allRecordsLoaded = true; // All records are now loaded
+    loadMoreRecordsBtn.style.display = 'none'; // Hide both buttons
+    loadAllRecordsBtn.style.display = 'none';
+    loadAllRecordsBtn.disabled = false;
+    loadAllRecordsBtn.textContent = getTranslatedText('loadAllBtn');
+};
+
 
 // Edit Record Modal Functions
 const openEditRecordModal = (record) => {
@@ -2364,7 +2545,10 @@ const saveEditedRecord = async () => { // Renamed for clarity
         showToastMessage(getTranslatedText('recordUpdatedSuccess'), 'success');
         editRecordModal.style.display = 'none';
         currentEditingRecordId = null;
-        await loadAndDisplayWorkRecords(recordFilterUser.value, recordFilterDate.value, recordFilterAccount.value, recordFilterTask.value); // Reload records
+        // After editing, reload records from scratch to ensure correct pagination state
+        lastVisibleRecord = null;
+        allRecordsLoaded = false;
+        await loadAndDisplayWorkRecords(recordFilterUser.value, recordFilterDate.value, recordFilterAccount.value, recordFilterTask.value, RECORDS_PER_PAGE);
         await renderEmployeeRatesAndTotals(); // Update employee rates table
     } catch (error) {
         showToastMessage(getTranslatedText('errorUpdatingRecord'), 'error');
@@ -2649,6 +2833,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
                 showPage(mainDashboard);
                 await renderMainDashboard();
+                trackUserActivity(); // Start tracking activity for regular users
             }
         } catch (error) {
             logout(); // Log out if stored user data is corrupted
@@ -2730,15 +2915,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     filterRecordsBtn.addEventListener('click', async () => {
         const selectedUserId = recordFilterUser.value === "" ? null : recordFilterUser.value;
         const selectedDate = recordFilterDate.value === "" ? null : recordFilterDate.value;
-        const selectedAccountId = recordFilterAccount.value === "" ? null : recordFilterAccount.value; // New filter value
-        const selectedTaskDefinitionId = recordFilterTask.value === "" ? null : recordFilterTask.value; // New filter value
-        showLoadingIndicator(true);
-        try {
-            await loadAndDisplayWorkRecords(selectedUserId, selectedDate, selectedAccountId, selectedTaskDefinitionId);
-        } finally {
-            showLoadingIndicator(false);
-        }
+        const selectedAccountId = recordFilterAccount.value === "" ? null : recordFilterAccount.value;
+        const selectedTaskDefinitionId = recordFilterTask.value === "" ? null : recordFilterTask.value;
+        
+        // Reset pagination when filters change
+        lastVisibleRecord = null;
+        allRecordsLoaded = false;
+        await loadAndDisplayWorkRecords(selectedUserId, selectedDate, selectedAccountId, selectedTaskDefinitionId, RECORDS_PER_PAGE);
     });
+    loadMoreRecordsBtn.addEventListener('click', handleLoadMoreRecords); // New event listener
+    loadAllRecordsBtn.addEventListener('click', handleLoadAllRecords); // New event listener
+
     logoutAdminBtn.addEventListener('click', logout);
 
     // Edit Record Modal
