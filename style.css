@@ -1140,33 +1140,6 @@ body.dark-mode .time-since-last-click {
     color: #ECF0F1;
 }
 
-body.dark-mode .total-hours-box {
-    background-color: #2ECC71; /* Secondary green */
-    border: 1px solid #27AE60;
-}
-
-body.dark-mode .total-hours-box p,
-body.dark-mode .total-hours-box p span {
-    color: #F8F9FA; /* Ensure text inside total boxes is bright */
-}
-
-
-body.dark-mode table {
-    border-color: #4A6070;
-}
-
-body.dark-mode table th {
-    background-color: #34495E; /* Darker blue/gray for table headers */
-    color: #76D7C4 !important; /* Soft teal, ensure it's applied */
-    border-color: #5D7A90;
-}
-
-body.dark-mode table td {
-    background-color: #2C3E50 !important; /* Darker blue/gray for table cells */
-    color: #F8F9FA !important; /* Brighter text color for table cells */
-    border-color: #4A6070 !important;
-}
-
 body.dark-mode .toast-message.success {
     background-color: #2ECC71;
 }
@@ -1396,3 +1369,4 @@ body.dark-mode .admin-action-btntp.primary:hover {
         padding: 3px 6px !important;
     }
 }
+
