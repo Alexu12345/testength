@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, Timestamp, serverTimestamp, addDoc, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, Timestamp, serverTimestamp, addDoc, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
 // Your web app's Firebase configuration
 // This must be consistent with the one you use for your Firebase project.
@@ -26,6 +26,9 @@ let selectedTaskDefinition = null; // The task definition selected for the curre
 let currentSessionTasks = []; // Tasks added in the current unsaved session
 let isSavingWork = false; // Flag to prevent beforeunload warning during save
 let lastClickTime = null; // For "time between clicks" feature
+
+// Firestore unsubscribe functions to manage real-time listeners
+let unsubscribeUsers = null; // For admin panel user status updates
 
 // Constants
 const SESSION_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours in milliseconds
@@ -524,11 +527,16 @@ const translations = {
         'adding': 'جارٍ الإضافة...', // New button text for adding state
         'updating': 'جارٍ التحديث...', // New button text for updating state
         'onlineNow': 'متصل الآن', // New
-        'onlineSince': 'متصل منذ {minutes} دقيقة و {seconds} ثانية', // New
+        'onlineOnAccountTask': 'متصل الآن على "{account}" - "{task}"', // New status
+        'onlineButNotWorking': 'متصل ولكن لا يعمل', // New status
+        'workingButNoRecord': 'يعمل ولكنه لم يسجل أي مهمة منذ {minutes} دقيقة و {seconds} ثانية', // New status
         'lastActivity': 'آخر نشاط: {date} {time}', // New
         'loadMoreBtn': 'أعرض أكثر ({count})', // New
         'loadAllBtn': 'عرض الكل', // New
-        'noTimings': 'لا توقيتات محددة' // New
+        'noTimings': 'لا توقيتات محددة', // New
+        'hoursUnitShort': 'س', // Short for hours unit
+        'minutesUnitShort': 'د', // Short for minutes unit
+        'secondsUnitShort': 'ث' // Short for seconds unit
     },
     'en': {
         'loginTitle': 'Login',
@@ -688,11 +696,16 @@ const translations = {
         'adding': 'Adding...', // New button text for adding state
         'updating': 'Updating...', // New button text for updating state
         'onlineNow': 'Online Now', // New
-        'onlineSince': 'Online {minutes} minutes and {seconds} seconds ago', // New
+        'onlineOnAccountTask': 'Online now on "{account}" - "{task}"', // New status
+        'onlineButNotWorking': 'Online but not working', // New status
+        'workingButNoRecord': 'Working but hasn\'t recorded any task since {minutes} minutes and {seconds} seconds ago', // New status
         'lastActivity': 'Last activity: {date} {time}', // New
         'loadMoreBtn': 'Show More ({count})', // New
         'loadAllBtn': 'Show All', // New
-        'noTimings': 'No timings defined' // New
+        'noTimings': 'No timings defined', // New
+        'hoursUnitShort': 'h', // Short for hours unit
+        'minutesUnitShort': 'm', // Short for minutes unit
+        'secondsUnitShort': 's' // Short for seconds unit
     }
 };
 
@@ -792,7 +805,9 @@ const applyTranslations = () => {
     }
     // Admin panel tables need re-rendering to update texts
     if (adminPanelPage.style.display === 'flex') {
-        renderAdminPanel(); // This will call loadAndDisplay functions which re-render tables
+        // No need to call renderAdminPanel here, as onSnapshot will handle it.
+        // Just ensure loadAndDisplayUsers is called if translations affect status.
+        loadAndDisplayUsers(); // Call to update status column translations
     }
     // Re-render track work page to update headers and content
     if (trackWorkPage.style.display === 'flex') {
@@ -802,17 +817,76 @@ const applyTranslations = () => {
 
 // Function to format numbers to English digits
 const formatNumberToEnglish = (num) => {
+    // Ensure numbers are formatted using English digits, even in RTL context
     return num.toLocaleString('en-US', { useGrouping: false });
 };
 
+// New helper function to format total seconds into HH:MM:SS string
+const formatSecondsToHHMMSS = (totalSeconds) => {
+    if (isNaN(totalSeconds) || totalSeconds < 0) {
+        return '00:00:00';
+    }
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+
+    const formattedHours = String(hours).padStart(2, '0');
+    const formattedMinutes = String(minutes).padStart(2, '0');
+    const formattedSeconds = String(seconds).padStart(2, '0');
+
+    return `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
+};
+
+// New helper function to get the maximum timing from a task definition
+const getMaxTimingForTask = (taskDefinitionId) => {
+    const task = allTaskDefinitions.find(t => t.id === taskDefinitionId);
+    if (task && task.timings && task.timings.length > 0) {
+        return Math.max(...task.timings); // Returns max timing in minutes
+    }
+    return 0; // Default to 0 if no timings or task not found
+};
+
 // 4. Session Management Functions
-const saveSession = (user) => {
+const saveSession = async (user) => {
     const sessionExpiry = Date.now() + SESSION_DURATION_MS;
     localStorage.setItem('loggedInUser', JSON.stringify(user));
     localStorage.setItem('sessionExpiry', sessionExpiry.toString());
+
+    // Update user's lastActivityTimestamp in Firestore upon login/session save
+    if (user && user.id !== 'admin') {
+        try {
+            const userDocRef = doc(db, 'users', user.id);
+            await updateDoc(userDocRef, { 
+                lastActivityTimestamp: serverTimestamp(),
+                // Clear current activity status on new login/session save
+                currentAccountId: null,
+                currentAccountName: null,
+                currentTaskDefinitionId: null,
+                currentTaskDefinitionName: null,
+                lastRecordedTaskTimestamp: null
+            });
+        } catch (error) {
+            console.error("Error updating user activity on session save:", error);
+        }
+    }
 };
 
-const clearSession = () => {
+const clearSession = async () => {
+    if (loggedInUser && loggedInUser.id !== 'admin') {
+        try {
+            const userDocRef = doc(db, 'users', loggedInUser.id);
+            await updateDoc(userDocRef, {
+                lastActivityTimestamp: serverTimestamp(), // Mark as last activity on logout
+                currentAccountId: null,
+                currentAccountName: null,
+                currentTaskDefinitionId: null,
+                currentTaskDefinitionName: null,
+                lastRecordedTaskTimestamp: null
+            });
+        } catch (error) {
+            console.error("Error clearing user activity on logout:", error);
+        }
+    }
     localStorage.removeItem('loggedInUser');
     localStorage.removeItem('sessionExpiry');
     loggedInUser = null; // Clear in-memory user data
@@ -833,6 +907,13 @@ const loadSession = async () => {
             showPage(mainDashboard); // This will hide loginPage
             await renderMainDashboard();
             trackUserActivity(); // Start tracking activity for regular users
+            // Update user's lastActivityTimestamp in Firestore on session load
+            try {
+                const userDocRef = doc(db, 'users', loggedInUser.id);
+                await updateDoc(userDocRef, { lastActivityTimestamp: serverTimestamp() });
+            } catch (error) {
+                console.error("Error updating last activity timestamp on session load:", error);
+            }
         }
         return true; // Session resumed
     } else {
@@ -866,7 +947,7 @@ window.addEventListener('beforeunload', (event) => {
 const fetchAllStaticData = async () => {
     showLoadingIndicator(true);
     try {
-        // Fetch Users
+        // Fetch Users (will be handled by onSnapshot in admin panel, but initial fetch here)
         const usersCollectionRef = collection(db, 'users');
         const usersSnapshot = await getDocs(usersCollectionRef);
         allUsers = usersSnapshot.docs.map(getDocData);
@@ -938,7 +1019,7 @@ const handleLogin = async () => {
         // Now use adminPinValue for comparison
         if (fullPin === adminPinValue) {
             loggedInUser = { id: 'admin', name: getTranslatedText('admin'), role: 'admin' };
-            saveSession(loggedInUser); // Save admin session
+            await saveSession(loggedInUser); // Save admin session
             showPage(adminPanelPage);
             await renderAdminPanel(); // Call renderAdminPanel here after successful login
             pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
@@ -955,7 +1036,7 @@ const handleLogin = async () => {
             if (!loggedInUser.role) {
                 loggedInUser.role = 'user';
             }
-            saveSession(loggedInUser); // Save user session
+            await saveSession(loggedInUser); // Save user session
             trackUserActivity(); // Start tracking activity for regular users
             showPage(mainDashboard);
             await renderMainDashboard(); // Call renderMainDashboard here after successful login
@@ -979,8 +1060,8 @@ const handleLogin = async () => {
 };
 
 // Logout function (defined globally for accessibility)
-const logout = () => {
-    clearSession();
+const logout = async () => {
+    await clearSession(); // Ensure session is cleared and Firestore status updated
     showPage(loginPage);
     pinInputs.forEach(input => input.value = ''); // Clear all PIN inputs
     pinInputs[0].focus(); // Focus on first PIN input
@@ -989,11 +1070,20 @@ const logout = () => {
 // User Activity Tracking (for "Status" column)
 let activityInterval = null;
 
-const updateLastActivityTimestamp = async () => {
+const updateLastActivityTimestamp = async (clearCurrentActivity = false) => {
     if (loggedInUser && loggedInUser.id !== 'admin') {
         try {
             const userDocRef = doc(db, 'users', loggedInUser.id);
-            await updateDoc(userDocRef, { lastActivityTimestamp: serverTimestamp() });
+            const updateData = { lastActivityTimestamp: serverTimestamp() };
+
+            if (clearCurrentActivity) {
+                updateData.currentAccountId = null;
+                updateData.currentAccountName = null;
+                updateData.currentTaskDefinitionId = null;
+                updateData.currentTaskDefinitionName = null;
+                updateData.lastRecordedTaskTimestamp = null;
+            }
+            await updateDoc(userDocRef, updateData);
         } catch (error) {
             // console.error("Error updating last activity timestamp:", error);
             // Don't show toast for this, as it's a background operation
@@ -1097,6 +1187,8 @@ const handleTrackWorkOptionClick = async () => {
     if (loggedInUser && loggedInUser.id !== 'admin') {
         showPage(trackWorkPage);
         await renderTrackWorkPage(); // This will now also render the chart
+        // Clear current activity status when navigating to Track Work page
+        await updateLastActivityTimestamp(true); 
     }
 };
 
@@ -1140,9 +1232,11 @@ const initializeStartWorkPage = async () => {
     taskTypeSelect.value = "";
     lastClickTime = null; // Reset last click time for new session
     await fetchAccountsAndTasks(); // This now uses cached data
+    // Clear current activity status when initializing start work page (before selection)
+    await updateLastActivityTimestamp(true); 
 };
 
-const handleConfirmSelection = () => {
+const handleConfirmSelection = async () => { // Made async to await Firestore update
     const accountId = accountSelect.value;
     const taskDefinitionId = taskTypeSelect.value;
 
@@ -1159,6 +1253,23 @@ const handleConfirmSelection = () => {
         taskDetailsContainer.style.display = 'block'; // Show details container
         renderTaskTimingButtons();
         updateWorkSummary(); // Initialize summary display
+
+        // Update user's current activity in Firestore
+        if (loggedInUser && loggedInUser.id !== 'admin') {
+            try {
+                const userDocRef = doc(db, 'users', loggedInUser.id);
+                await updateDoc(userDocRef, {
+                    currentAccountId: selectedAccount.id,
+                    currentAccountName: selectedAccount.name,
+                    currentTaskDefinitionId: selectedTaskDefinition.id,
+                    currentTaskDefinitionName: selectedTaskDefinition.name,
+                    lastRecordedTaskTimestamp: serverTimestamp() // Set initial last recorded time
+                });
+            } catch (error) {
+                console.error("Error updating user current activity:", error);
+                showToastMessage(getTranslatedText('errorLoadingData'), 'error'); // Inform user of potential issue
+            }
+        }
     } else {
         showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     }
@@ -1166,8 +1277,9 @@ const handleConfirmSelection = () => {
 
 // Event listener for the new "Back" button in the task selection popup
 backToDashboardFromPopup.addEventListener('click', () => {
-    showConfirmationModal(getTranslatedText('unsavedTasksWarning'), () => {
+    showConfirmationModal(getTranslatedText('unsavedTasksWarning'), async () => { // Made async
         currentSessionTasks = []; // Clear tasks if user goes back without saving
+        await updateLastActivityTimestamp(true); // Clear current activity status
         showPage(mainDashboard);
     }, () => {
         // Do nothing if cancelled
@@ -1194,7 +1306,7 @@ const renderTaskTimingButtons = () => {
             timeMessageDiv.style.display = 'none'; // Initially hidden
             wrapper.appendChild(timeMessageDiv);
 
-            button.addEventListener('click', () => {
+            button.addEventListener('click', async () => { // Made async
                 const now = Date.now();
                 if (lastClickTime) {
                     const diffMs = now - lastClickTime;
@@ -1229,6 +1341,16 @@ const renderTaskTimingButtons = () => {
                 updateWorkSummary();
                 // Show undo button for this specific timing
                 wrapper.querySelector('.undo-btn').classList.add('show');
+
+                // Update user's lastRecordedTaskTimestamp in Firestore
+                if (loggedInUser && loggedInUser.id !== 'admin') {
+                    try {
+                        const userDocRef = doc(db, 'users', loggedInUser.id);
+                        await updateDoc(userDocRef, { lastRecordedTaskTimestamp: serverTimestamp() });
+                    } catch (error) {
+                        console.error("Error updating last recorded task timestamp:", error);
+                    }
+                }
             });
             wrapper.appendChild(button);
 
@@ -1248,6 +1370,7 @@ const renderTaskTimingButtons = () => {
                 if (countOfThisTiming === 0) {
                     undoButton.classList.remove('show');
                 }
+                // Note: We don't update lastRecordedTaskTimestamp on undo, as it reflects actual recording.
             });
             wrapper.appendChild(undoButton);
             taskTimingButtonsContainer.appendChild(wrapper);
@@ -1348,6 +1471,10 @@ const saveWorkRecord = async () => { // Renamed for clarity
             showToastMessage(getTranslatedText('workSavedSuccess'), 'success');
             currentSessionTasks = [];
             isSavingWork = false; // Reset flag
+            
+            // Clear current activity status after saving work
+            await updateLastActivityTimestamp(true); 
+
             showPage(mainDashboard);
             await renderMainDashboard();
         }
@@ -1364,13 +1491,16 @@ const saveWorkRecord = async () => { // Renamed for clarity
 // Back button from Start Work Page
 backToDashboardFromStartWork.addEventListener('click', () => {
     if (currentSessionTasks.length > 0) {
-        showConfirmationModal(getTranslatedText('unsavedTasksWarning'), () => {
+        showConfirmationModal(getTranslatedText('unsavedTasksWarning'), async () => { // Made async
             currentSessionTasks = []; // Clear tasks if user abandons it
+            await updateLastActivityTimestamp(true); // Clear current activity status
             showPage(mainDashboard);
         }, () => {
             // Do nothing if cancelled
         });
     } else {
+        // If no tasks, just go back and clear activity
+        updateLastActivityTimestamp(true); 
         showPage(mainDashboard);
     }
 });
@@ -1787,8 +1917,27 @@ const renderAdminPanel = async () => {
     }
     showLoadingIndicator(true); // Start loading indicator for admin panel
     try {
+        // Unsubscribe from previous listener if exists to prevent multiple listeners
+        if (unsubscribeUsers) {
+            unsubscribeUsers();
+            unsubscribeUsers = null;
+        }
+
+        // Set up new onSnapshot listener for real-time user status updates
+        const usersCollectionRef = collection(db, 'users');
+        unsubscribeUsers = onSnapshot(usersCollectionRef, async (snapshot) => {
+            allUsers = snapshot.docs.map(getDocData);
+            await loadAndDisplayUsers(); // This will re-render the users table with updated status
+            // Also re-render employee rates as user activity affects total hours/balance calculations
+            await renderEmployeeRatesAndTotals();
+        }, (error) => {
+            console.error("Error listening to users collection:", error);
+            showToastMessage(getTranslatedText('errorLoadingData'), 'error');
+        });
+
+
         // These functions now use cached data
-        await loadAndDisplayUsers();
+        // loadAndDisplayUsers() will be called by onSnapshot
         await loadAndDisplayAccounts();
         await loadAndDisplayTaskDefinitions();
         await populateFilters(); // Populate all filter dropdowns
@@ -1803,7 +1952,7 @@ const renderAdminPanel = async () => {
         allRecordsLoaded = false;
         await loadAndDisplayWorkRecords(null, null, null, null, RECORDS_PER_PAGE); // Load first 50 records
         
-        await renderEmployeeRatesAndTotals(); // New function call
+        // renderEmployeeRatesAndTotals() will be called by onSnapshot
     } catch (error) {
         showToastMessage(getTranslatedText('errorLoadingData'), 'error');
     } finally {
@@ -1834,34 +1983,76 @@ const loadAndDisplayUsers = async () => {
                 
                 // Status Column Logic
                 const statusCell = row.insertCell();
+                let statusText = '';
+                let statusTooltip = '';
+                let statusColor = '';
+
                 if (user.lastActivityTimestamp) {
                     const lastActivityTime = user.lastActivityTimestamp.toDate().getTime();
                     const diffMs = now - lastActivityTime;
 
-                    if (diffMs < USER_ONLINE_THRESHOLD_MS) { // Less than 1 minute
-                        statusCell.textContent = getTranslatedText('onlineNow');
-                        statusCell.style.color = '#2ECC71'; // Green for online
-                    } else if (diffMs < USER_RECENTLY_ONLINE_THRESHOLD_MS) { // Less than 1 hour
+                    if (diffMs < USER_ONLINE_THRESHOLD_MS) { // Less than 1 minute (actively online)
+                        if (user.currentAccountId && user.currentTaskDefinitionId) {
+                            // User is on Start Work page and selected account/task
+                            statusText = getTranslatedText('onlineOnAccountTask', {
+                                account: user.currentAccountName,
+                                task: user.currentTaskDefinitionName
+                            });
+                            statusColor = '#3498DB'; // Blue for working on a task
+
+                            // Check for delay in recording tasks
+                            if (user.lastRecordedTaskTimestamp) {
+                                const lastRecordedTime = user.lastRecordedTaskTimestamp.toDate().getTime();
+                                const timeSinceLastRecordMs = now - lastRecordedTime;
+                                const timeSinceLastRecordSeconds = Math.floor(timeSinceLastRecordMs / 1000);
+
+                                const maxTimingMinutes = getMaxTimingForTask(user.currentTaskDefinitionId);
+                                // Threshold is max timing + 1 minute (converted to seconds)
+                                const delayThresholdSeconds = (maxTimingMinutes * 60) + 60; 
+
+                                if (timeSinceLastRecordSeconds > delayThresholdSeconds) {
+                                    const delayMinutes = Math.floor(timeSinceLastRecordSeconds / 60);
+                                    const delaySeconds = timeSinceLastRecordSeconds % 60;
+                                    statusText = getTranslatedText('workingButNoRecord', {
+                                        minutes: formatNumberToEnglish(delayMinutes),
+                                        seconds: formatNumberToEnglish(delaySeconds)
+                                    });
+                                    statusTooltip = `${getTranslatedText('hoursUnitShort')}: ${formatNumberToEnglish(Math.floor(timeSinceLastRecordSeconds / 3600))}, ${getTranslatedText('minutesUnitShort')}: ${formatNumberToEnglish(Math.floor((timeSinceLastRecordSeconds % 3600) / 60))}, ${getTranslatedText('secondsUnitShort')}: ${formatNumberToEnglish(timeSinceLastRecordSeconds % 60)}`;
+                                    statusColor = '#E74C3C'; // Red for delay
+                                }
+                            }
+                        } else {
+                            // User is online but not on a specific task (dashboard, track work, or selecting)
+                            statusText = getTranslatedText('onlineButNotWorking');
+                            statusColor = '#F39C12'; // Orange for online but idle
+                        }
+                    } else if (diffMs < USER_RECENTLY_ONLINE_THRESHOLD_MS) { // Less than 1 hour (recently online)
                         const minutes = Math.floor(diffMs / (60 * 1000));
                         const seconds = Math.floor((diffMs % (60 * 1000)) / 1000);
-                        statusCell.textContent = getTranslatedText('onlineSince', {
+                        statusText = getTranslatedText('onlineSince', {
                             minutes: formatNumberToEnglish(minutes),
                             seconds: formatNumberToEnglish(seconds)
                         });
-                        statusCell.style.color = '#F39C12'; // Orange for recently online
-                    } else {
+                        statusColor = '#2ECC71'; // Green for recently online
+                    } else { // Offline
                         const activityDate = new Date(lastActivityTime);
                         const formattedDate = activityDate.toLocaleDateString(currentLanguage, { day: 'numeric', month: 'short', year: 'numeric' });
                         const formattedTime = activityDate.toLocaleTimeString(currentLanguage, { hour: '2-digit', minute: '2-digit' });
-                        statusCell.textContent = getTranslatedText('lastActivity', {
+                        statusText = getTranslatedText('lastActivity', {
                             date: formattedDate,
                             time: formattedTime
                         });
-                        statusCell.style.color = '#E74C3C'; // Red for offline
+                        statusColor = '#95A5A6'; // Gray for offline
                     }
                 } else {
-                    statusCell.textContent = getTranslatedText('notSet'); // If no activity recorded yet
-                    statusCell.style.color = '#95A5A6';
+                    statusText = getTranslatedText('notSet'); // If no activity recorded yet
+                    statusColor = '#95A5A6';
+                }
+
+                statusCell.textContent = statusText;
+                statusCell.style.color = statusColor;
+                if (statusTooltip) {
+                    statusCell.title = statusTooltip;
                 }
 
                 const actionCell = row.insertCell();
@@ -1877,9 +2068,9 @@ const loadAndDisplayUsers = async () => {
                             await deleteDoc(doc(db, 'users', user.id)); 
                             showToastMessage(getTranslatedText('userDeletedSuccess'), 'success');
                             await fetchAllStaticData(); // Re-fetch all static data after deletion
-                            await loadAndDisplayUsers(); // Reload after delete
+                            // loadAndDisplayUsers() will be called by onSnapshot
                             await populateFilters(); // Update all filter dropdowns
-                            await renderEmployeeRatesAndTotals(); // Update employee rates table
+                            // renderEmployeeRatesAndTotals() will be called by onSnapshot
                         } catch (err) {
                             showToastMessage(getTranslatedText('errorAddingUser'), 'error'); // Reusing translation key
                         } finally {
@@ -1933,14 +2124,24 @@ const addUser = async () => { // Renamed for clarity
             return;
         }
 
-        await addDoc(usersCollectionRef, { name: name, pin: pin, role: 'user', lastActivityTimestamp: serverTimestamp() }); // Add lastActivityTimestamp
+        await addDoc(usersCollectionRef, { 
+            name: name, 
+            pin: pin, 
+            role: 'user', 
+            lastActivityTimestamp: serverTimestamp(),
+            currentAccountId: null, // Initialize new fields
+            currentAccountName: null,
+            currentTaskDefinitionId: null,
+            currentTaskDefinitionName: null,
+            lastRecordedTaskTimestamp: null
+        }); 
         showToastMessage(getTranslatedText('userAddedSuccess'), 'success');
         newUserNameInput.value = '';
         newUserPINInput.value = '';
         await fetchAllStaticData(); // Re-fetch all static data after adding
-        await loadAndDisplayUsers();
+        // loadAndDisplayUsers() will be called by onSnapshot
         await populateFilters(); // Re-populate all filters after adding a new user
-        await renderEmployeeRatesAndTotals(); // Update employee rates table
+        // renderEmployeeRatesAndTotals() will be called by onSnapshot
     } catch (error) {
         showToastMessage(getTranslatedText('errorAddingUser'), 'error');
     } finally {
@@ -2878,32 +3079,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     confirmSelectionBtn.addEventListener('click', handleConfirmSelection);
     backToDashboardFromPopup.addEventListener('click', () => {
         if (currentSessionTasks.length > 0) {
-            showConfirmationModal(getTranslatedText('unsavedTasksWarning'), () => {
+            showConfirmationModal(getTranslatedText('unsavedTasksWarning'), async () => { // Made async
                 currentSessionTasks = [];
+                await updateLastActivityTimestamp(true); // Clear current activity status
                 showPage(mainDashboard);
             }, () => {
                 // Do nothing if cancelled
             });
         } else {
+            // If no tasks, just go back and clear activity
+            updateLastActivityTimestamp(true); 
             showPage(mainDashboard);
         }
     });
     saveWorkBtn.addEventListener('click', saveWorkRecord);
     backToDashboardFromStartWork.addEventListener('click', () => {
         if (currentSessionTasks.length > 0) {
-            showConfirmationModal(getTranslatedText('unsavedTasksWarning'), () => {
+            showConfirmationModal(getTranslatedText('unsavedTasksWarning'), async () => { // Made async
                 currentSessionTasks = [];
+                await updateLastActivityTimestamp(true); // Clear current activity status
                 showPage(mainDashboard);
             }, () => {
                 // Do nothing if cancelled
             });
         } else {
+            // If no tasks, just go back and clear activity
+            updateLastActivityTimestamp(true); 
             showPage(mainDashboard);
         }
     });
 
     // Track Work Page Buttons
-    backToDashboardFromTrackBtn.addEventListener('click', () => {
+    backToDashboardFromTrackBtn.addEventListener('click', async () => { // Made async
+        await updateLastActivityTimestamp(true); // Clear current activity status
         showPage(mainDashboard);
     });
 
@@ -2926,7 +3134,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadMoreRecordsBtn.addEventListener('click', handleLoadMoreRecords); // New event listener
     loadAllRecordsBtn.addEventListener('click', handleLoadAllRecords); // New event listener
 
-    logoutAdminBtn.addEventListener('click', logout);
+    // Admin Logout button: Unsubscribe from real-time listener before logging out
+    logoutAdminBtn.addEventListener('click', async () => {
+        if (unsubscribeUsers) {
+            unsubscribeUsers();
+            unsubscribeUsers = null;
+        }
+        await logout(); // Call the original logout function
+    });
 
     // Edit Record Modal
     if (closeEditRecordModalBtn) {
