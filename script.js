@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, Timestamp, serverTimestamp, addDoc, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getFirestore, doc, collection, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, Timestamp, serverTimestamp, addDoc, orderBy, onSnapshot, startAfter } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
 // Your web app's Firebase configuration
 // This must be consistent with the one you use for your Firebase project.
@@ -34,7 +34,7 @@ let unsubscribeUsers = null; // For admin panel user status updates
 const SESSION_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours in milliseconds
 const SESSION_CLOSED_BROWSER_MS = 1 * 60 * 60 * 1000; // 1 hour if browser closed
 const USER_ONLINE_THRESHOLD_MS = 60 * 1000; // 1 minute for "online now"
-const USER_RECENTLY_ONLINE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour for "online X minutes ago"
+const USER_RECENTLY_ONLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes for "online X minutes ago" (changed from 1 hour)
 const RECORDS_PER_PAGE = 50; // Number of records to load per click
 
 // DOM Elements
@@ -367,6 +367,15 @@ const formatTotalMinutesToHHMMSS = (totalMinutes) => {
     return `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
 };
 
+// New helper function to get the maximum timing from a task definition
+const getMaxTimingForTask = (taskDefinitionId) => {
+    const task = allTaskDefinitions.find(t => t.id === taskDefinitionId);
+    if (task && task.timings && task.timings.length > 0) {
+        return Math.max(...task.timings); // Returns max timing in minutes
+    }
+    return 0; // Default to 0 if no timings or task not found
+};
+
 // Language Support (Updated with new keys)
 const translations = {
     'ar': {
@@ -536,7 +545,10 @@ const translations = {
         'noTimings': 'لا توقيتات محددة', // New
         'hoursUnitShort': 'س', // Short for hours unit
         'minutesUnitShort': 'د', // Short for minutes unit
-        'secondsUnitShort': 'ث' // Short for seconds unit
+        'secondsUnitShort': 'ث', // Short for seconds unit
+        'netSessionTime': 'صافي وقت الجلسة', // New
+        'delayAmount': 'مقدار التأخير', // New
+        'totalSessionTime': 'إجمالي وقت الجلسة' // New
     },
     'en': {
         'loginTitle': 'Login',
@@ -705,7 +717,10 @@ const translations = {
         'noTimings': 'No timings defined', // New
         'hoursUnitShort': 'h', // Short for hours unit
         'minutesUnitShort': 'm', // Short for minutes unit
-        'secondsUnitShort': 's' // Short for seconds unit
+        'secondsUnitShort': 's', // Short for seconds unit
+        'netSessionTime': 'Net session time', // New
+        'delayAmount': 'Delay amount', // New
+        'totalSessionTime': 'Total session time' // New
     }
 };
 
@@ -821,31 +836,6 @@ const formatNumberToEnglish = (num) => {
     return num.toLocaleString('en-US', { useGrouping: false });
 };
 
-// New helper function to format total seconds into HH:MM:SS string
-const formatSecondsToHHMMSS = (totalSeconds) => {
-    if (isNaN(totalSeconds) || totalSeconds < 0) {
-        return '00:00:00';
-    }
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = Math.floor(totalSeconds % 60);
-
-    const formattedHours = String(hours).padStart(2, '0');
-    const formattedMinutes = String(minutes).padStart(2, '0');
-    const formattedSeconds = String(seconds).padStart(2, '0');
-
-    return `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
-};
-
-// New helper function to get the maximum timing from a task definition
-const getMaxTimingForTask = (taskDefinitionId) => {
-    const task = allTaskDefinitions.find(t => t.id === taskDefinitionId);
-    if (task && task.timings && task.timings.length > 0) {
-        return Math.max(...task.timings); // Returns max timing in minutes
-    }
-    return 0; // Default to 0 if no timings or task not found
-};
-
 // 4. Session Management Functions
 const saveSession = async (user) => {
     const sessionExpiry = Date.now() + SESSION_DURATION_MS;
@@ -863,7 +853,8 @@ const saveSession = async (user) => {
                 currentAccountName: null,
                 currentTaskDefinitionId: null,
                 currentTaskDefinitionName: null,
-                lastRecordedTaskTimestamp: null
+                lastRecordedTaskTimestamp: null,
+                sessionStartTime: null // Clear session start time on new login
             });
         } catch (error) {
             console.error("Error updating user activity on session save:", error);
@@ -881,7 +872,8 @@ const clearSession = async () => {
                 currentAccountName: null,
                 currentTaskDefinitionId: null,
                 currentTaskDefinitionName: null,
-                lastRecordedTaskTimestamp: null
+                lastRecordedTaskTimestamp: null,
+                sessionStartTime: null // Clear session start time on logout
             });
         } catch (error) {
             console.error("Error clearing user activity on logout:", error);
@@ -1029,7 +1021,6 @@ const handleLogin = async () => {
         const usersCollectionRef = collection(db, 'users'); 
         const userQueryRef = query(usersCollectionRef, where('pin', '==', fullPin), limit(1)); 
         const userQuerySnapshot = await getDocs(userQueryRef); 
-
         if (!userQuerySnapshot.empty) {
             loggedInUser = getDocData(userQuerySnapshot.docs[0]);
             // Ensure user has a role, default to 'user' if not explicitly set
@@ -1082,6 +1073,7 @@ const updateLastActivityTimestamp = async (clearCurrentActivity = false) => {
                 updateData.currentTaskDefinitionId = null;
                 updateData.currentTaskDefinitionName = null;
                 updateData.lastRecordedTaskTimestamp = null;
+                updateData.sessionStartTime = null; // Clear session start time
             }
             await updateDoc(userDocRef, updateData);
         } catch (error) {
@@ -1263,7 +1255,8 @@ const handleConfirmSelection = async () => { // Made async to await Firestore up
                     currentAccountName: selectedAccount.name,
                     currentTaskDefinitionId: selectedTaskDefinition.id,
                     currentTaskDefinitionName: selectedTaskDefinition.name,
-                    lastRecordedTaskTimestamp: serverTimestamp() // Set initial last recorded time
+                    lastRecordedTaskTimestamp: serverTimestamp(), // Set initial last recorded time
+                    sessionStartTime: serverTimestamp() // Set session start time
                 });
             } catch (error) {
                 console.error("Error updating user current activity:", error);
@@ -1535,7 +1528,7 @@ const renderTrackWorkPage = async () => {
             return;
         }
 
-        // Data processing for the complex table
+        // Data processing for the complex table with merging logic
         const processedData = {};
         let grandTotalTasks = 0;
         let grandTotalTime = 0;
@@ -1567,45 +1560,45 @@ const renderTrackWorkPage = async () => {
             if (!processedData[recordDate].accounts[record.accountId]) {
                 processedData[recordDate].accounts[record.accountId] = { name: record.accountName, tasks: {}, accountTotalTasks: 0, accountTotalTime: 0, accountTotalBalance: 0, totalRows: 0 };
             }
-            // Group by taskDefinitionId, but also include the specific record's time for display
-            // Use documentSnapshot.id for a truly unique key for each record to avoid merging different records of the same task type
-            const taskRecordKey = documentSnapshot.id; 
-            if (!processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey]) {
-                processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey] = {
+            
+            // Use taskDefinitionId as the key for tasks within an account for merging
+            const taskDefinitionKey = record.taskDefinitionId; 
+            if (!processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey]) {
+                processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey] = {
                     name: record.taskDefinitionName,
-                    timings: {},
-                    taskTotalTasks: 0,
-                    taskTotalTime: 0,
-                    taskTotalBalance: 0,
-                    totalRows: 0 // To calculate rowspan for the task
+                    timings: {}, // This will aggregate all timings for this taskDefinitionId
+                    taskGroupTotalTasks: 0, // Total tasks for this task type group
+                    taskGroupTotalTime: 0, // Total time for this task type group
+                    taskGroupTotalBalance: 0, // Total balance for this task type group
+                    totalRows: 0 // To calculate rowspan for the task group
                 };
             }
 
+            // Add the current record's timings to the aggregated timings for this taskDefinitionKey
             record.recordedTimings.forEach(rt => {
-                // Use total seconds (multiplied by 1000 for precision) as the key for grouping to avoid floating point issues
                 const timingKey = Math.round(rt.timing * 1000).toString(); 
-                if (!processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey]) {
-                    processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey] = { count: 0, totalTime: 0 };
+                if (!processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey].timings[timingKey]) {
+                    processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey].timings[timingKey] = { count: 0, totalTime: 0 };
                 }
-                processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey].count++;
-                processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].timings[timingKey].totalTime += rt.timing;
+                processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey].timings[timingKey].count++;
+                processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey].timings[timingKey].totalTime += rt.timing;
 
                 // Aggregate for chart
                 chartDataForUser[record.taskDefinitionName] = (chartDataForUser[record.taskDefinitionName] || 0) + rt.timing;
             });
 
-            // Update totals for the specific record
-            processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].taskTotalTasks += record.totalTasksCount;
-            processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].taskTotalTime += record.totalTime;
+            // Update totals for the task group
+            processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey].taskGroupTotalTasks += record.totalTasksCount;
+            processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey].taskGroupTotalTime += record.totalTime;
 
             // Calculate balance for this record using applicable price
             const account = accountsMap.get(record.accountId);
             let pricePerHour = account ? (account.defaultPricePerHour || 0) : 0;
-            if (userCustomRatesMap.has(record.accountId)) { // Corrected variable name here
-                pricePerHour = userCustomRatesMap.get(record.accountId); // Corrected variable name here
+            if (userCustomRatesMap.has(record.accountId)) { 
+                pricePerHour = userCustomRatesMap.get(record.accountId); 
             }
             const recordBalance = (record.totalTime / 60) * pricePerHour;
-            processedData[recordDate].accounts[record.accountId].tasks[taskRecordKey].taskTotalBalance += recordBalance;
+            processedData[recordDate].accounts[record.accountId].tasks[taskDefinitionKey].taskGroupTotalBalance += recordBalance;
 
 
             // Update totals for account and date
@@ -1628,11 +1621,10 @@ const renderTrackWorkPage = async () => {
             for (const accountId in dateData.accounts) {
                 const accountData = dateData.accounts[accountId];
                 accountData.totalRows = 0;
-                for (const taskRecordKey in accountData.tasks) {
-                    const taskData = accountData.tasks[taskRecordKey];
-                    // Each timing within a task record gets its own row. If no timings, still one row for the task.
+                for (const taskDefinitionKey in accountData.tasks) { 
+                    const taskData = accountData.tasks[taskDefinitionKey]; 
                     const timingsCount = Object.keys(taskData.timings).length;
-                    taskData.totalRows = timingsCount > 0 ? timingsCount : 1;
+                    taskData.totalRows = timingsCount > 0 ? timingsCount : 1; // At least one row for task
                     accountData.totalRows += taskData.totalRows;
                 }
                 dateData.totalRows += accountData.totalRows;
@@ -1708,25 +1700,25 @@ const renderTrackWorkPage = async () => {
 
             for (const accountId of sortedAccountIds) {
                 const accountData = dateData.accounts[accountId];
-                const sortedTaskRecordKeys = Object.keys(accountData.tasks).sort((a, b) => {
+                const sortedTaskDefinitionKeys = Object.keys(accountData.tasks).sort((a, b) => {
                     const taskA = accountData.tasks[a];
                     const taskB = accountData.tasks[b];
                     // Sort by task name first, then by total time (descending)
                     if (taskA.name !== taskB.name) {
                         return taskA.name.localeCompare(taskB.name, currentLanguage);
                     }
-                    return taskB.taskTotalTime - taskA.taskTotalTime;
+                    return taskB.taskGroupTotalTime - taskA.taskGroupTotalTime; // Use taskGroupTotalTime
                 });
                 let accountRowSpanHandled = false; // Flag to ensure account name and total for account cells are added only once per account group
 
-                for (const taskRecordKey of sortedTaskRecordKeys) {
-                    const taskData = accountData.tasks[taskRecordKey];
+                for (const taskDefinitionKey of sortedTaskDefinitionKeys) { // Changed to taskDefinitionKey
+                    const taskData = accountData.tasks[taskDefinitionKey]; // This is the aggregated task data
                     // Sort timings by their numerical value (after converting key back to number)
                     const sortedTimings = Object.keys(taskData.timings).sort((a, b) => parseFloat(a) - parseFloat(b));
                     const timingsCount = sortedTimings.length;
                     const actualTaskRows = timingsCount > 0 ? timingsCount : 1; // At least one row for task
 
-                    let taskRowSpanHandled = false; // Flag to ensure task name and total for task cells are added only once per task record
+                    let taskRowSpanHandled = false; // Flag to ensure task name and total for task cells are added only once per task group
 
                     for (let i = 0; i < actualTaskRows; i++) {
                         const row = trackTasksTableBody.insertRow();
@@ -1758,7 +1750,7 @@ const renderTrackWorkPage = async () => {
                             cell.classList.add('total-cell');
                         }
 
-                        // Column 4: Task Name (per task record)
+                        // Column 4: Task Name (per task group)
                         if (!taskRowSpanHandled) {
                             const cell = row.insertCell();
                             cell.textContent = taskData.name;
@@ -1777,7 +1769,7 @@ const renderTrackWorkPage = async () => {
                             timingValueCell.textContent = formatNumberToEnglish('00:00'); // Default if no timings
                         }
 
-                        // Column 6: Completed Tasks (per timing) - RE-ADDED
+                        // Column 6: Completed Tasks (per timing)
                         const completedTasksCell = row.insertCell();
                         if (currentTiming) {
                             completedTasksCell.textContent = formatNumberToEnglish(currentTiming.count);
@@ -1785,7 +1777,7 @@ const renderTrackWorkPage = async () => {
                             completedTasksCell.textContent = formatNumberToEnglish(0);
                         }
                         
-                        // Column 7: Total Time (per timing) - Now column 7
+                        // Column 7: Total Time (per timing)
                         const totalTimeCell = row.insertCell(); 
                         if (currentTiming) {
                             totalTimeCell.textContent = formatNumberToEnglish(formatMinutesToMMSS(currentTiming.totalTime));
@@ -1793,41 +1785,40 @@ const renderTrackWorkPage = async () => {
                             totalTimeCell.textContent = formatNumberToEnglish('00:00'); // Default if no timings
                         }
                         
-                        // Add tooltip for tasks summary to the totalTimeCell
+                        // Add tooltip for tasks summary to the totalTimeCell (now reflects aggregated task timings)
                         const taskSummaryTooltip = Object.keys(taskData.timings)
-                            .map(timingKey => { // Renamed to timingKey
+                            .map(timingKey => { 
                                 const summary = taskData.timings[timingKey];
-                                // Convert timingKey back to decimal minutes for display in tooltip
                                 const displayTimingMinutes = parseFloat(timingKey) / 1000;
                                 return getTranslatedText('tasksSummaryTooltip', {
                                     count: formatNumberToEnglish(summary.count),
                                     time: formatNumberToEnglish(formatMinutesToMMSS(displayTimingMinutes))
                                 });
                             })
-                            .join('\n'); // Join with newline for multi-line tooltip
+                            .join('\n'); 
                         totalTimeCell.title = taskSummaryTooltip;
 
 
-                        // Column 8: Total for Task (per task record) - Now column 8
+                        // Column 8: Total for Task (per task group)
                         if (!taskRowSpanHandled) {
                             const cell = row.insertCell();
-                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(taskData.taskTotalTime))} (${formatNumberToEnglish(taskData.taskTotalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')})`;
+                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(taskData.taskGroupTotalTime))} (${Math.round(formatNumberToEnglish(taskData.taskGroupTotalBalance.toFixed(2)))} ${getTranslatedText('currencyUnit')})`;
                             cell.rowSpan = actualTaskRows;
                             cell.classList.add('total-cell');
                         }
 
-                        // Column 9: Total for Account (per account) - Now column 9
+                        // Column 9: Total for Account (per account)
                         if (!accountRowSpanHandled) {
                             const cell = row.insertCell();
-                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(accountData.accountTotalTime))} (${formatNumberToEnglish(accountData.accountTotalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')})`;
+                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(accountData.accountTotalTime))} (${Math.round(formatNumberToEnglish(accountData.accountTotalBalance.toFixed(2)))} ${getTranslatedText('currencyUnit')})`;
                             cell.rowSpan = accountData.totalRows;
                             cell.classList.add('total-cell');
                         }
 
-                        // Column 10: Daily Total Time (per date) - Now column 10
+                        // Column 10: Daily Total Time (per date)
                         if (!dateRowSpanHandled) {
                             const cell = row.insertCell();
-                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(dateData.dateTotalTime))} (${formatNumberToEnglish(dateData.dateTotalBalance.toFixed(2))} ${getTranslatedText('currencyUnit')})`; // Display daily total
+                            cell.textContent = `${formatNumberToEnglish(formatMinutesToMMSS(dateData.dateTotalTime))} (${Math.round(formatNumberToEnglish(dateData.dateTotalBalance.toFixed(2)))} ${getTranslatedText('currencyUnit')})`; // Display daily total
                             cell.rowSpan = dateData.totalRows;
                             cell.classList.add('total-cell', 'daily-total-cell'); // Add daily-total-cell class
                         }
@@ -1856,7 +1847,7 @@ const renderTrackWorkPage = async () => {
         cell.textContent = getTranslatedText('grandTotal');
         cell.classList.add('grand-total-label');
 
-        // Total Tasks Overall value (re-added)
+        // Total Tasks Overall value
         cell = footerRow.insertCell();
         cell.textContent = `${getTranslatedText('totalTasksOverall')}: ${formatNumberToEnglish(grandTotalTasks)}`;
         cell.classList.add('grand-total-value');
@@ -1948,7 +1939,7 @@ const renderAdminPanel = async () => {
         recordFilterTask.value = ''; // Clear task filter
         
         // Initial load of work records with pagination
-        lastVisibleRecord = null; // Reset pagination
+        lastVisibleRecord = null;
         allRecordsLoaded = false;
         await loadAndDisplayWorkRecords(null, null, null, null, RECORDS_PER_PAGE); // Load first 50 records
         
@@ -2000,33 +1991,38 @@ const loadAndDisplayUsers = async () => {
                             });
                             statusColor = '#3498DB'; // Blue for working on a task
 
-                            // Check for delay in recording tasks
-                            if (user.lastRecordedTaskTimestamp) {
-                                const lastRecordedTime = user.lastRecordedTaskTimestamp.toDate().getTime();
-                                const timeSinceLastRecordMs = now - lastRecordedTime;
-                                const timeSinceLastRecordSeconds = Math.floor(timeSinceLastRecordMs / 1000);
+                            // --- Calculate Session Details for Tooltip ---
+                            let netSessionMinutes = 0;
+                            let totalDelayMinutes = 0;
+                            let totalSessionMinutes = 0;
 
-                                const maxTimingMinutes = getMaxTimingForTask(user.currentTaskDefinitionId);
-                                // Threshold is max timing + 1 minute (converted to seconds)
-                                const delayThresholdSeconds = (maxTimingMinutes * 60) + 60; 
+                            if (user.sessionStartTime) {
+                                const sessionStartMs = user.sessionStartTime.toDate().getTime();
+                                const currentSessionDurationMs = now - sessionStartMs;
+                                totalSessionMinutes = currentSessionDurationMs / (60 * 1000); // in minutes
 
-                                if (timeSinceLastRecordSeconds > delayThresholdSeconds) {
-                                    const delayMinutes = Math.floor(timeSinceLastRecordSeconds / 60);
-                                    const delaySeconds = timeSinceLastRecordSeconds % 60;
-                                    statusText = getTranslatedText('workingButNoRecord', {
-                                        minutes: formatNumberToEnglish(delayMinutes),
-                                        seconds: formatNumberToEnglish(delaySeconds)
-                                    });
-                                    statusTooltip = `${getTranslatedText('hoursUnitShort')}: ${formatNumberToEnglish(Math.floor(timeSinceLastRecordSeconds / 3600))}, ${getTranslatedText('minutesUnitShort')}: ${formatNumberToEnglish(Math.floor((timeSinceLastRecordSeconds % 3600) / 60))}, ${getTranslatedText('secondsUnitShort')}: ${formatNumberToEnglish(timeSinceLastRecordSeconds % 60)}`;
-                                    statusColor = '#E74C3C'; // Red for delay
+                                if (user.lastRecordedTaskTimestamp) {
+                                    const lastRecordedTimeMs = user.lastRecordedTaskTimestamp.toDate().getTime();
+                                    const timeSinceLastRecordMs = now - lastRecordedTimeMs;
+                                    const maxTimingMinutes = getMaxTimingForTask(user.currentTaskDefinitionId);
+                                    // Grace period: max task timing + 1 minute (converted to milliseconds)
+                                    const delayThresholdMs = (maxTimingMinutes * 60 * 1000) + (1 * 60 * 1000); 
+
+                                    if (timeSinceLastRecordMs > delayThresholdMs) {
+                                        totalDelayMinutes = (timeSinceLastRecordMs - delayThresholdMs) / (60 * 1000); // in minutes
+                                    }
                                 }
+                                netSessionMinutes = totalSessionMinutes - totalDelayMinutes;
                             }
+
+                            statusTooltip = `- ${getTranslatedText('netSessionTime')}: ${formatNumberToEnglish(formatMinutesToMMSS(netSessionMinutes))}\n- ${getTranslatedText('delayAmount')}: ${formatNumberToEnglish(formatMinutesToMMSS(totalDelayMinutes))}\n- ${getTranslatedText('totalSessionTime')}: ${formatNumberToEnglish(formatMinutesToMMSS(totalSessionMinutes))}`;
+
                         } else {
                             // User is online but not on a specific task (dashboard, track work, or selecting)
                             statusText = getTranslatedText('onlineButNotWorking');
                             statusColor = '#F39C12'; // Orange for online but idle
                         }
-                    } else if (diffMs < USER_RECENTLY_ONLINE_THRESHOLD_MS) { // Less than 1 hour (recently online)
+                    } else if (diffMs < USER_RECENTLY_ONLINE_THRESHOLD_MS) { // Less than USER_RECENTLY_ONLINE_THRESHOLD_MS (5 minutes)
                         const minutes = Math.floor(diffMs / (60 * 1000));
                         const seconds = Math.floor((diffMs % (60 * 1000)) / 1000);
                         statusText = getTranslatedText('onlineSince', {
@@ -2034,7 +2030,7 @@ const loadAndDisplayUsers = async () => {
                             seconds: formatNumberToEnglish(seconds)
                         });
                         statusColor = '#2ECC71'; // Green for recently online
-                    } else { // Offline
+                    } else { // Offline (more than USER_RECENTLY_ONLINE_THRESHOLD_MS)
                         const activityDate = new Date(lastActivityTime);
                         const formattedDate = activityDate.toLocaleDateString(currentLanguage, { day: 'numeric', month: 'short', year: 'numeric' });
                         const formattedTime = activityDate.toLocaleTimeString(currentLanguage, { hour: '2-digit', minute: '2-digit' });
@@ -2050,10 +2046,10 @@ const loadAndDisplayUsers = async () => {
                 }
 
                 statusCell.textContent = statusText;
-                statusCell.style.color = statusColor;
                 if (statusTooltip) {
                     statusCell.title = statusTooltip;
                 }
+                statusCell.style.color = statusColor;
 
                 const actionCell = row.insertCell();
                 const deleteBtn = document.createElement('button');
@@ -2133,7 +2129,8 @@ const addUser = async () => { // Renamed for clarity
             currentAccountName: null,
             currentTaskDefinitionId: null,
             currentTaskDefinitionName: null,
-            lastRecordedTaskTimestamp: null
+            lastRecordedTaskTimestamp: null,
+            sessionStartTime: null // Initialize session start time for new users
         }); 
         showToastMessage(getTranslatedText('userAddedSuccess'), 'success');
         newUserNameInput.value = '';
