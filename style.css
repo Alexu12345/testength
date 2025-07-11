@@ -13,7 +13,7 @@ body {
     background-color: #f0f2f5; /* Light mode background */
     display: flex;
     justify-content: center;
-    align-items: flex-start; /* Align to top, not center, to allow content flow */
+    align-items: center; /* Align to top, not center, to allow content flow */
     min-height: 100vh;
     margin: 0;
     padding: 20px;
@@ -31,7 +31,6 @@ body {
     border-radius: 12px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
     width: 100%;
-    max-width: 550px; /* Default max-width for most pages */
     margin: 20px auto; /* Center the page horizontally */
     box-sizing: border-box;
     display: flex; /* Ensure flex for internal layout */
@@ -610,9 +609,8 @@ button.disabled {
 
 /* Admin Panel Styles */
 .admin-panel-container {
-    max-width: 900px;
-    padding: 40px;
-    text-align: right;
+    padding: 30px;
+    text-align: center;
 }
 
 .admin-panel-container h1 {
@@ -1140,6 +1138,33 @@ body.dark-mode .time-since-last-click {
     color: #ECF0F1;
 }
 
+body.dark-mode .total-hours-box {
+    background-color: #2ECC71; /* Secondary green */
+    border: 1px solid #27AE60;
+}
+
+body.dark-mode .total-hours-box p,
+body.dark-mode .total-hours-box p span {
+    color: #F8F9FA; /* Ensure text inside total boxes is bright */
+}
+
+
+body.dark-mode table {
+    border-color: #4A6070;
+}
+
+body.dark-mode table th {
+    background-color: #34495E; /* Darker blue/gray for table headers */
+    color: #76D7C4 !important; /* Soft teal, ensure it's applied */
+    border-color: #5D7A90;
+}
+
+body.dark-mode table td {
+    background-color: #2C3E50 !important; /* Darker blue/gray for table cells */
+    color: #F8F9FA !important; /* Brighter text color for table cells */
+    border-color: #4A6070 !important;
+}
+
 body.dark-mode .toast-message.success {
     background-color: #2ECC71;
 }
@@ -1368,5 +1393,3 @@ body.dark-mode .admin-action-btntp.primary:hover {
         font-size: 9px !important; /* Very small for mobile buttons */
         padding: 3px 6px !important;
     }
-}
-
