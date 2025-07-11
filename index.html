@@ -6,69 +6,74 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Work Tracker</title>
     <link rel="stylesheet" href="style.css">
+    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     
-    <script src="https://cdn.jsdelivr.com/npm/chart.js"></script>
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
+    <!-- Loading Indicator -->
     <div id="loadingIndicator" class="loading-indicator" style="display: none;">
         <div class="spinner"></div>
     </div>
 
+    <!-- Toast Message -->
     <div id="toastMessage" class="toast-message" style="display: none;"></div>
 
+    <!-- Language Switcher -->
     <div class="lang-switcher">
         <button id="langArBtn" class="lang-btn active">العربية</button>
         <button id="langEnBtn" class="lang-btn">English</button>
     </div>
 
+    <!-- Dark Mode Toggle -->
     <button id="darkModeToggle" class="dark-mode-toggle">
         <i class="fas fa-moon"></i>
     </button>
 
+    <!-- Login Page -->
     <div id="loginPage" class="login-container page">
         <h1 data-key="loginTitle">تسجيل الدخول</h1>
         <div class="pin-input-group">
-            <input type="tel" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric">
-            <input type="tel" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric">
-            <input type="tel" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric">
-            <input type="tel" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric">
-            <input type="tel" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric">
-            <input type="tel" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric">
-            <input type="tel" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric">
-            <input type="tel" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric">
+            <input type="tel" id="pinInput1" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="off">
+            <input type="tel" id="pinInput2" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="off">
+            <input type="tel" id="pinInput3" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="off">
+            <input type="tel" id="pinInput4" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="off">
+            <input type="tel" id="pinInput5" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="off">
+            <input type="tel" id="pinInput6" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="off">
+            <input type="tel" id="pinInput7" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="off">
+            <input type="tel" id="pinInput8" class="pin-input-field" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="off">
         </div>
-        <button id="loginBtn" data-key="loginBtn">دخول</button>
-        <span id="pinError" class="input-error-message"></span>
     </div>
 
+    <!-- Main Dashboard -->
     <div id="mainDashboard" class="main-dashboard-container page" style="display: none;">
         <div class="header-bar">
             <div class="user-info">
-                <img src="https://via.placeholder.com/50/CCCCCC/FFFFFF?text=User" alt="User Avatar" class="user-avatar">
-                <span id="userNameDisplay" class="user-name-display"></span>
-            </div>
-            <div class="total-hours-box">
-                <p><span data-key="totalHours">إجمالي الساعات:</span> <span id="totalHoursDisplay">00:00:00</span></p>
-                <p><span data-key="totalBalance">الرصيد الكلي:</span> <span id="totalBalanceDisplay">0.00 ج.م</span></p>
+                <img src="https://github.com/Alexu12345/Work_Tracker/blob/main/images.jpg?raw=true" alt="User Avatar" class="user-avatar">
+                <p><span data-key="hello">مرحباً، </span><span id="userNameDisplay"></span>!</p>
+                <div class="total-hours-box">
+                    <p><span data-key="totalHoursTitle">إجمالي ساعات العمل:</span> <span id="totalHoursDisplay">0.00</span> <span data-key="hoursUnit">ساعة</span></p>
+                    <p><span data-key="totalBalanceTitle">إجمالي الرصيد:</span> <span id="totalBalanceDisplay">0.00</span> <span data-key="currencyUnit">جنيه</span></p>
+                </div>
             </div>
         </div>
-        
         <div class="dashboard-options">
             <button id="startWorkOption" class="big-option-btn" data-key="startWorkOption">بدء العمل</button>
             <button id="trackWorkOption" class="big-option-btn" data-key="trackWorkOption">متابعة العمل</button>
-            <button id="adminPanelButton" class="big-option-btn admin-button" data-key="adminPanel">لوحة تحكم المدير</button>
+            <!-- Admin Panel button will be added dynamically by JS for admin user only -->
         </div>
-        <button id="logoutDashboardBtn" class="secondary" data-key="logoutBtn">تسجيل الخروج</button>
+        <button id="logoutDashboardBtn" class="back-btn" data-key="logoutAdmin">تسجيل الخروج</button>
     </div>
 
+    <!-- Start Work Page -->
     <div id="startWorkPage" class="start-work-container page" style="display: none;">
-        <h2 data-key="startWorkTitle">بدء العمل</h2>
-        <div id="taskSelectionPopup" class="task-selection-popup">
-            <h3 data-key="selectTaskAccount">اختر الحساب ونوع المهمة</h3>
+        <div id="taskSelectionPopup" class="popup">
+            <h2 data-key="chooseTask">اختر المهمة</h2>
             <div class="input-group">
-                <label for="accountSelect" data-key="account">الحساب:</label>
+                <label for="accountSelect" data-key="accountName">اسم الحساب:</label>
                 <select id="accountSelect"></select>
             </div>
             <div class="input-group">
@@ -76,276 +81,280 @@
                 <select id="taskTypeSelect"></select>
             </div>
             <button id="confirmSelectionBtn" data-key="confirmBtn">تأكيد</button>
-            <button id="backToDashboardFromPopup" class="secondary" data-key="backToDashboard">العودة للرئيسية</button>
+            <button id="backToDashboardFromPopup" class="secondary" data-key="backToDashboard">رجوع للرئيسية</button>
         </div>
 
-        <div id="selectedTaskInfo" class="selected-task-info" style="display: none;">
-            <p><strong data-key="account">الحساب:</strong> <span id="selectedAccountName"></span></p>
-            <p><strong data-key="taskType">نوع المهمة:</strong> <span id="selectedTaskTypeName"></span></p>
-            <p><strong data-key="completedTasks">المهام المنجزة:</strong> <span id="completedTasksCount">0</span></p>
-            <p><strong data-key="totalTimeRecorded">إجمالي الوقت المسجل:</strong> <span id="recordedTotalTime">00:00:00</span></p>
-        </div>
-
-        <div id="taskTimingButtonsContainer" class="task-timing-buttons-container">
+        <div id="taskDetailsContainer" style="display: none; width: 100%;">
+            <div class="work-summary-section">
+                <table>
+                    <tr>
+                        <td data-key="taskCount">عدد المهام المنجزة:</td>
+                        <td id="completedTasksCount">0</td>
+                    </tr>
+                    <tr>
+                        <td data-key="totalTimeRecorded">إجمالي الوقت المسجل:</td>
+                        <td id="recordedTotalTime">00:00</td>
+                    </tr>
+                </table>
+                <div id="detailedSummaryContainer">
+                    <!-- Detailed timing summary will be rendered here -->
+                </div>
             </div>
-        
-        <div id="detailedSummaryContainer" class="detailed-summary-container">
+
+            <div id="taskTimingButtonsContainer" class="task-timing-buttons-section">
+                <!-- Task timing buttons will be rendered here -->
             </div>
 
-        <div class="start-work-actions">
-            <button id="undoLastAdd" class="secondary" data-key="undoLastAdd">إلغاء آخر إضافة</button>
-            <button id="saveWorkBtn" data-key="saveWork">حفظ العمل</button>
+            <button id="saveWorkBtn" class="save-work-btn" data-key="saveWorkBtn">حفظ العمل</button>
+            <button id="backToDashboardFromStartWork" class="back-btn" data-key="backToDashboard">رجوع للرئيسية</button>
         </div>
-        <button id="backToDashboardFromStartWork" class="secondary" data-key="backToDashboard">العودة للرئيسية</button>
     </div>
 
+    <!-- Track Work Page -->
     <div id="trackWorkPage" class="track-work-container page" style="display: none;">
-        <h2 data-key="trackWorkTitle">متابعة العمل</h2>
+        <h1 data-key="trackWorkTitle">متابعة العمل</h1>
         <div class="chart-container">
             <canvas id="taskChart"></canvas>
         </div>
-
+        <button id="backToDashboardFromTrack" class="back-btn" data-key="backToDashboard">رجوع للرئيسية</button>
         <div class="table-responsive">
-            <table class="data-table">
+            <table>
                 <thead>
                     <tr>
-                        <th data-key="user">المستخدم</th>
-                        <th data-key="date">التاريخ</th>
-                        <th data-key="account">الحساب</th>
-                        <th data-key="taskType">نوع المهمة</th>
-                        <th data-key="completedTasks">المهام المنجزة</th>
-                        <th data-key="totalTime">إجمالي الوقت</th>
-                        <th data-key="totalBalance">الرصيد</th>
+                        <th data-key="serialColumn">المسلسل</th>
+                        <th data-key="dateColumn">التاريخ</th>
+                        <th data-key="accountNameColumn">اسم الحساب</th>
+                        <th data-key="taskColumn">المهمة</th>
+                        <th data-key="timingValueColumn">التوقيت (دقيقة)</th>
+                        <th data-key="completedTasksColumn">عدد المهام المنجزة</th>
+                        <th data-key="totalTimeMinutesColumn">إجمالي الوقت (دقيقة)</th>
+                        <th data-key="totalForTaskColumn">إجمالي المهمة</th>
+                        <th data-key="totalForAccountColumn">إجمالي الحساب</th>
+                        <th data-key="dailyTotalTimeColumn">إجمالي اليوم</th>
                     </tr>
                 </thead>
                 <tbody id="trackTasksTableBody">
-                    </tbody>
+                    <!-- Data will be dynamically loaded here -->
+                </tbody>
                 <tfoot id="trackTasksTableFoot">
-                    </tfoot>
+                    <!-- Grand totals will be dynamically loaded here -->
+                </tfoot>
             </table>
         </div>
-        <button id="backToDashboardFromTrackBtn" class="secondary" data-key="backToDashboard">العودة للرئيسية</button>
     </div>
 
+    <!-- Admin Panel Page -->
     <div id="adminPanelPage" class="admin-panel-container page" style="display: none;">
-        <h2 data-key="adminPanelTitle">لوحة تحكم المدير</h2>
-
-        <div class="admin-tabs">
-            <button class="tab-button active" data-tab="users" data-key="users">المستخدمون</button>
-            <button class="tab-button" data-tab="accounts" data-key="accounts">الحسابات</button>
-            <button class="tab-button" data-tab="taskDefinitions" data-key="taskDefinitions">تعريفات المهام</button>
-            <button class="tab-button" data-tab="workRecords" data-key="workRecords">سجلات العمل</button>
-            <button class="tab-button" data-tab="employeeRates" data-key="employeeRates">أسعار الموظفين</button>
-        </div>
-
-        <div id="usersSection" class="admin-section active-tab">
-            <h3 data-key="users">المستخدمون</h3>
+        <h1 data-key="adminPanelTitle">لوحة تحكم المدير</h1>
+        <button id="logoutAdminBtn" class="back-btn" data-key="logoutAdmin">تسجيل الخروج</button>
+        <div class="admin-section">
+            <h2 data-key="manageUsers">إدارة المستخدمين</h2>
             <div class="input-group">
-                <label for="newUserNameInput" data-key="userName">اسم المستخدم:</label>
-                <input type="text" id="newUserNameInput">
+                <input type="text" id="newUserNameInput" placeholder="اسم المستخدم الجديد" data-key="newUserName">
                 <span id="newUserNameInputError" class="input-error-message"></span>
             </div>
             <div class="input-group">
-                <label for="newUserPINInput" data-key="pin">PIN:</label>
-                <input type="number" id="newUserPINInput" maxlength="8">
+                <input type="password" id="newUserPINInput" placeholder="رمز PIN للمستخدم (8 أرقام)" maxlength="8" data-key="newUserPIN">
                 <span id="newUserPINInputError" class="input-error-message"></span>
             </div>
-            <button id="addUserBtn" data-key="addUser">إضافة مستخدم</button>
+            <button id="addUserBtn" data-key="addUserBtn">إضافة مستخدم</button>
+            <h3 data-key="currentUsers">المستخدمون الحاليون:</h3>
             <div class="table-responsive">
-                <table class="data-table">
+                <table id="usersTable">
                     <thead>
                         <tr>
-                            <th data-key="userName">اسم المستخدم</th>
-                            <th data-key="pin">PIN</th>
-                            <th data-key="role">الدور</th>
-                            <th data-key="status">الحالة</th>
-                            <th data-key="actions">الإجراءات</th>
+                            <th data-key="nameColumn">الاسم</th>
+                            <th data-key="pinColumn">PIN</th>
+                            <th data-key="statusColumn">الحالة</th> <!-- New Status Column -->
+                            <th data-key="actionsColumn">إجراءات</th>
                         </tr>
                     </thead>
                     <tbody id="usersTableBody">
-                        </tbody>
+                        <!-- Users will be loaded here -->
+                    </tbody>
                 </table>
             </div>
         </div>
 
-        <div id="accountsSection" class="admin-section">
-            <h3 data-key="accounts">الحسابات</h3>
+        <div class="admin-section">
+            <h2 data-key="manageAccounts">إدارة الحسابات</h2>
             <div class="input-group">
-                <label for="newAccountNameInput" data-key="accountName">اسم الحساب:</label>
-                <input type="text" id="newAccountNameInput">
+                <input type="text" id="newAccountNameInput" placeholder="اسم الحساب الجديد" data-key="newAccountName">
                 <span id="newAccountNameInputError" class="input-error-message"></span>
             </div>
             <div class="input-group">
-                <label for="newAccountPriceInput" data-key="defaultPricePerHour">السعر الافتراضي للساعة (جنيه):</label>
-                <input type="number" id="newAccountPriceInput" step="0.01" min="0">
+                <input type="number" id="newAccountPriceInput" placeholder="السعر الافتراضي للساعة (جنيه)" step="0.01" min="0" data-key="defaultPricePlaceholder">
                 <span id="newAccountPriceInputError" class="input-error-message"></span>
             </div>
-            <button id="addAccountBtn" data-key="addAccount">إضافة حساب</button>
+            <button id="addAccountBtn" data-key="addAccountBtn">إضافة حساب</button>
+            <h3 data-key="currentAccounts">الحسابات الحالية:</h3>
             <div class="table-responsive">
-                <table class="data-table">
+                <table id="accountsTable">
                     <thead>
                         <tr>
-                            <th data-key="accountName">اسم الحساب</th>
-                            <th data-key="defaultPricePerHour">السعر الافتراضي للساعة</th>
-                            <th data-key="actions">الإجراءات</th>
+                            <th data-key="accountNameColumn">اسم الحساب</th>
+                            <th data-key="defaultPriceColumn">السعر الافتراضي/ساعة</th>
+                            <th data-key="actionsColumn">إجراءات</th>
                         </tr>
                     </thead>
                     <tbody id="accountsTableBody">
-                        </tbody>
+                        <!-- Accounts will be loaded here -->
+                    </tbody>
                 </table>
             </div>
         </div>
 
-        <div id="taskDefinitionsSection" class="admin-section">
-            <h3 data-key="taskDefinitions">تعريفات المهام</h3>
+        <div class="admin-section">
+            <h2 data-key="manageTasks">إدارة المهام والتوقيتات</h2>
             <div class="input-group">
-                <label for="newTaskNameInput" data-key="taskName">اسم المهمة:</label>
-                <input type="text" id="newTaskNameInput">
+                <input type="text" id="newTaskNameInput" placeholder="اسم المهمة الجديدة" data-key="newTaskName">
                 <span id="newTaskNameInputError" class="input-error-message"></span>
             </div>
-            <div id="newTimingsContainer" class="timing-input-container">
-                <div class="input-group timing-input-group">
-                    <label data-key="timing">توقيت (بالدقائق):</label>
-                    <input type="number" class="newTimingInput" min="1">
-                    <button type="button" class="remove-timing-btn secondary">&times;</button>
+            <div id="newTimingsContainer" class="timing-input-group-container">
+                <!-- Changed to minutes and seconds inputs -->
+                <div class="timing-input-group">
+                    <input type="number" class="new-task-timing-minutes" placeholder="دقائق" min="0" data-key="minutesPlaceholder">
+                    <input type="number" class="new-task-timing-seconds" placeholder="ثواني" min="0" max="59" data-key="secondsPlaceholder">
                 </div>
             </div>
-            <button id="addTimingFieldBtn" class="secondary" data-key="addTimingField">إضافة حقل توقيت</button>
-            <button id="addTaskDefinitionBtn" data-key="addTaskDefinition">إضافة تعريف مهمة</button>
+            <span id="newTimingsInputError" class="input-error-message"></span>
+            <button id="addTimingFieldBtn" data-key="addTimingField">إضافة حقل توقيت</button>
+            <button id="addTaskDefinitionBtn" data-key="addTaskBtn">إضافة مهمة جديدة</button>
+            <h3 data-key="currentTasks">المهام الحالية:</h3>
             <div class="table-responsive">
-                <table class="data-table">
+                <table id="tasksDefinitionTable">
                     <thead>
                         <tr>
-                            <th data-key="taskName">اسم المهمة</th>
-                            <th data-key="timings">التوقيتات (دقائق)</th>
-                            <th data-key="actions">الإجراءات</th>
+                            <th data-key="taskNameColumn">المهمة</th>
+                            <th data-key="timingsColumn">التوقيتات (دقائق:ثواني)</th>
+                            <th data-key="actionsColumn">إجراءات</th>
                         </tr>
                     </thead>
                     <tbody id="tasksDefinitionTableBody">
-                        </tbody>
+                        <!-- Task definitions will be loaded here -->
+                    </tbody>
                 </table>
             </div>
         </div>
 
-        <div id="workRecordsSection" class="admin-section">
-            <h3 data-key="workRecords">سجلات العمل</h3>
-            <div class="filter-controls">
-                <div class="input-group">
-                    <label for="filterDateInput" data-key="date">التاريخ:</label>
-                    <input type="date" id="filterDateInput">
-                </div>
-                <div class="input-group">
-                    <label for="filterUserInput" data-key="user">المستخدم:</label>
-                    <select id="filterUserInput">
-                        <option value="" data-key="allUsers">جميع المستخدمين</option>
-                        </select>
-                </div>
-                <div class="input-group">
-                    <label for="filterAccountInput" data-key="account">الحساب:</label>
-                    <select id="filterAccountInput">
-                        <option value="" data-key="allAccounts">جميع الحسابات</option>
-                        </select>
-                </div>
-                <div class="input-group">
-                    <label for="filterTaskInput" data-key="taskType">المهمة:</label>
-                    <select id="filterTaskInput">
-                        <option value="" data-key="allTasks">جميع المهام</option>
-                        </select>
-                </div>
-                <button id="filterRecordsBtn" data-key="filter">تصفية</button>
-            </div>
+        <!-- New Admin Section: Manage Employee Rates and Totals -->
+        <div class="admin-section">
+            <h2 data-key="manageEmployeeRates">إدارة أسعار الموظفين والإجماليات</h2>
             <div class="table-responsive">
-                <table class="data-table">
+                <table id="employeeRatesTable">
                     <thead>
                         <tr>
-                            <th data-key="user">المستخدم</th>
-                            <th data-key="date">التاريخ</th>
-                            <th data-key="time">الوقت</th>
-                            <th data-key="account">الحساب</th>
-                            <th data-key="taskType">نوع المهمة</th>
-                            <th data-key="completedTasks">المهام المنجزة</th>
-                            <th data-key="totalTime">إجمالي الوقت</th>
-                            <th data-key="totalBalance">الرصيد</th>
-                            <th data-key="actions">الإجراءات</th>
-                        </tr>
-                    </thead>
-                    <tbody id="workRecordsTableBody">
-                        </tbody>
-                </table>
-            </div>
-            <div class="pagination-controls">
-                <button id="loadMoreRecordsBtn" data-key="loadMore">تحميل المزيد</button>
-                <button id="loadAllRecordsBtn" data-key="loadAll">تحميل الكل</button>
-            </div>
-        </div>
-
-        <div id="employeeRatesSection" class="admin-section">
-            <h3 data-key="employeeRates">أسعار الموظفين</h3>
-            <div class="table-responsive">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th data-key="userName">اسم المستخدم</th>
-                            <th data-key="accountName">اسم الحساب</th>
-                            <th data-key="defaultPricePerHour">السعر الافتراضي للساعة</th>
-                            <th data-key="customPrice">السعر المخصص</th>
-                            <th data-key="totalHours">إجمالي الساعات</th>
-                            <th data-key="totalBalance">إجمالي الرصيد</th>
-                            <th data-key="actions">الإجراءات</th>
+                            <th></th> <!-- New empty header for the icon column -->
+                            <th data-key="employeeNameColumn">الموظف</th>
+                            <th data-key="accountNameColumn">الحساب</th>
+                            <th data-key="defaultPriceColumn">السعر الافتراضي/ساعة</th>
+                            <th data-key="customPriceColumn">السعر المخصص/ساعة</th>
+                            <th data-key="accountTotalTimeColumnShort" title="إجمالي وقت الحساب (بالدقائق والثواني)">وقت الحساب</th>
+                            <th data-key="accountBalanceColumn">رصيد الحساب</th>
+                            <th data-key="employeeTotalHoursColumn">إجمالي الساعات</th>
+                            <th data-key="employeeTotalBalanceColumn">إجمالي الرصيد المستحق</th>
                         </tr>
                     </thead>
                     <tbody id="employeeRatesTableBody">
-                        </tbody>
+                        <!-- Employee rates and totals will be loaded here -->
+                    </tbody>
                 </table>
             </div>
         </div>
 
-        <button id="logoutAdminBtn" class="secondary" data-key="logoutBtn">تسجيل الخروج</button>
+        <div class="admin-section">
+            <h2 data-key="manageWorkRecords">إدارة سجلات العمل</h2>
+            <div class="filter-controls">
+                <input type="date" id="recordFilterDate">
+                <select id="recordFilterUser">
+                    <!-- Users will be populated here -->
+                </select>
+                <select id="recordFilterAccount">
+                    <!-- Accounts will be populated here -->
+                </select>
+                <select id="recordFilterTask">
+                    <!-- Tasks will be populated here -->
+                </select>
+                <button id="filterRecordsBtn" data-key="filterBtn">تصفية</button>
+            </div>
+            <div class="table-responsive">
+                <table id="workRecordsTable">
+                    <thead>
+                        <tr>
+                            <th data-key="userColumn">المستخدم</th>
+                            <th data-key="accountNameColumn">الحساب</th>
+                            <th data-key="taskColumn">المهمة</th>
+                            <th data-key="totalTimeMinutesColumn">إجمالي الوقت (دقيقة)</th>
+                            <th data-key="dateColumn">التاريخ</th>
+                            <th data-key="actionsColumn">إجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody id="workRecordsTableBody">
+                        <!-- Work records will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination-controls">
+                <button id="loadMoreRecordsBtn" class="secondary" data-key="loadMoreBtn" style="display: none;">أعرض أكثر (50)</button>
+                <button id="loadAllRecordsBtn" class="secondary" data-key="loadAllBtn" style="display: none;">عرض الكل</button>
+            </div>
+        </div>
     </div>
 
+    <!-- Edit Record Modal -->
     <div id="editRecordModal" class="modal">
         <div class="modal-content">
-            <span class="close-button" id="closeEditRecordModal">&times;</span>
-            <h3 data-key="editRecord">تعديل سجل العمل</h3>
+            <span class="close-button">&times;</span>
+            <h3 data-key="editRecord">تعديل</h3>
             <div class="input-group">
-                <label for="editRecordAccountSelect" data-key="account">الحساب:</label>
-                <select id="editRecordAccountSelect"></select>
+                <label for="editAccountSelect" data-key="accountName">اسم الحساب:</label>
+                <select id="editAccountSelect"></select>
+                <span id="editAccountSelectError" class="input-error-message"></span>
             </div>
+
             <div class="input-group">
-                <label for="editRecordTaskTypeSelect" data-key="taskType">نوع المهمة:</label>
-                <select id="editRecordTaskTypeSelect"></select>
+                <label for="editTaskTypeSelect" data-key="taskType">نوع المهمة:</label>
+                <select id="editTaskTypeSelect"></select>
+                <span id="editTaskTypeSelectError" class="input-error-message"></span>
             </div>
+
             <div class="input-group">
-                <label for="editRecordCompletedTasks" data-key="completedTasks">المهام المنجزة:</label>
-                <input type="number" id="editRecordCompletedTasks" min="1">
-                <span id="editRecordCompletedTasksError" class="input-error-message"></span>
+                <label for="editTotalTasksCount" data-key="taskCountEdit">عدد المهام:</label>
+                <input type="number" id="editTotalTasksCount" step="1" min="0">
+                <span id="editTotalTasksCountError" class="input-error-message"></span>
             </div>
+
             <div class="input-group">
-                <label for="editRecordTotalTime" data-key="totalTime">إجمالي الوقت (دقائق):</label>
-                <input type="number" id="editRecordTotalTime" min="1">
-                <span id="editRecordTotalTimeError" class="input-error-message"></span>
+                <label for="editTotalTime" data-key="totalTimeEdit">إجمالي الوقت (دقيقة):</label>
+                <input type="number" id="editTotalTime" step="0.01" min="0">
+                <span id="editTotalTimeError" class="input-error-message"></span>
             </div>
+
             <div class="input-group">
-                <label for="editRecordDate" data-key="date">التاريخ:</label>
+                <label for="editRecordDate" data-key="dateColumn">التاريخ:</label>
                 <input type="date" id="editRecordDate">
                 <span id="editRecordDateError" class="input-error-message"></span>
             </div>
+
             <div class="input-group">
-                <label for="editRecordTime" data-key="time">الوقت:</label>
+                <label for="editRecordTime" data-key="timeColumn">الوقت:</label>
                 <input type="time" id="editRecordTime">
                 <span id="editRecordTimeError" class="input-error-message"></span>
             </div>
+
             <button id="saveEditedRecordBtn" data-key="saveChangesBtn">حفظ التعديلات</button>
         </div>
     </div>
 
+    <!-- Edit Employee Custom Rate Modal -->
     <div id="editEmployeeRateModal" class="modal">
         <div class="modal-content">
-            <span class="close-button" id="closeEditEmployeeRateModal">&times;</span>
-            <h3 data-key="editEmployeeRate">تعديل سعر الموظف</h3>
-            <p><strong data-key="userName">اسم المستخدم:</strong> <span id="modalEmployeeName"></span></p>
-            <p><strong data-key="accountName">اسم الحساب:</strong> <span id="modalAccountName"></span></p>
-            <p><strong data-key="defaultPrice">السعر الافتراضي:</strong> <span id="modalDefaultPrice"></span></p>
+            <span class="close-button">&times;</span>
+            <h3 data-key="editCustomRateTitle">تعديل السعر المخصص</h3>
+            <p><span data-key="employeeNameLabel">الموظف:</span> <span id="modalEmployeeName"></span></p>
+            <p><span data-key="accountNameLabel">الحساب:</span> <span id="modalAccountName"></span></p>
+            <p><span data-key="defaultPriceLabel">السعر الافتراضي:</span> <span id="modalDefaultPrice"></span></p>
+            
             <div class="input-group">
                 <label for="modalCustomPriceInput" data-key="customPriceInputLabel">السعر المخصص (جنيه):</label>
                 <input type="number" id="modalCustomPriceInput" step="0.01" min="0">
@@ -356,6 +365,7 @@
         </div>
     </div>
 
+    <!-- Custom Alert/Error Modal for Login PIN -->
     <div id="loginErrorModal" class="modal">
         <div class="modal-content">
             <span class="close-button" id="closeLoginErrorModal">&times;</span>
@@ -365,6 +375,7 @@
         </div>
     </div>
 
+    <!-- Custom Confirmation Modal -->
     <div id="confirmationModal" class="modal">
         <div class="modal-content">
             <span class="close-button" id="closeConfirmationModal">&times;</span>
@@ -377,7 +388,7 @@
         </div>
     </div>
 
-    <script src="script.js" type="module"></script>
+    <script type="module" src="script.js"></script>
 </body>
 
 </html>
