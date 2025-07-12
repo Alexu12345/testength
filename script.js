@@ -648,6 +648,7 @@ const translations = {
         'manageWorkRecords': 'Manage Work Records',
         'allUsers': 'All Users',
         'filterBtn': 'Filter',
+        'onlineSince': 'Was online for: {minutes} minutes and {seconds} seconds', // New
         'noMatchingRecords': 'No matching work records.',
         'userColumn': 'User',
         'dateColumn': 'Date', 
